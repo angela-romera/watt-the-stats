@@ -1,4 +1,6 @@
-from utils.data_cleaning import load_csv, transform_date, rows_to_skip
+import pandas as pd
+
+from utils.data_cleaning import load_csv, transform_date, rows_to_skip, transform_to_time
 from utils.exceptions_handler import error_exit
 
 
@@ -31,3 +33,17 @@ def get_invoice_data(file):
     # invoice_df = add_col_from_df(DB_ELEC, invoice_df, 'cups', 'client', 'id', 'id_client')
 
     return invoice_df
+
+
+def get_detail_data(file):
+    # Load second part of consumption csv to have detail info
+    detail_df = load_csv(file, 7, ['date', 'hour', 'consumption', 'price', 'cost_per_hour'])
+
+    # Check if value of last col in last row is nan and drop it
+    if pd.isna(detail_df.iloc[-1, -1]):
+        detail_df.dropna(axis=0, subset=[detail_df.columns[-1]], inplace=True)
+
+    # Get hour col in correct format
+    detail_df['hour'] = detail_df['hour'].apply(transform_to_time)
+
+    return detail_df
