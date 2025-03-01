@@ -10,8 +10,9 @@ load_dotenv()
 with open('settings.json', 'r') as f:
     config = json.load(f)
 
-# Path for downloading
+# Path of downloaded/processed data
 DOWNLOADS_PATH = os.path.realpath(config["download_folder"])
+PROCESSED_PATH = os.path.realpath(config["processed_folder"])
 
 # Scraperbot constants
 URL = config["url"]
