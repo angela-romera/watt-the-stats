@@ -2,30 +2,22 @@ import time
 
 from selenium.webdriver.common.by import By
 
+from utils.web_scraper import click_element, click_element_from_list
+
 
 # Download data
 def download_csv(driver):
     for idx in range(1, 7):
         # Select period
         time.sleep(15)
-        dropdown_button = driver.find_elements(By.XPATH, '//span[@class="chosen-single"]')
-        dropdown_button[1].click()
-        time.sleep(5)
-        try:
-            test_click = driver.find_element(By.CSS_SELECTOR, f'li.active-result[data-option-array-index="{idx}"]')
-            test_click.click()
-            time.sleep(15)
-        except:
-            driver.find_element(By.CSS_SELECTOR, f'li.active-result[data-option-array-index="{idx}"]').click()
-            time.sleep(15)
+        click_element_from_list(driver, By.XPATH, "//span[@class='chosen-single']", 5, 1, "Period dropdown")
+        click_element(driver, By.XPATH, f"li.active-result[data-option-array-index='{idx}]'", 15, "Select period")
 
         # Download sheet button
-        driver.find_element(By.XPATH, '//a[@id="downloadSheet"]').click()
-        time.sleep(3)
+        click_element(driver, By.XPATH, "//a[@id='downloadSheet']", 3, "Download sheet button")
 
         # Save as csv
-        driver.find_element(By.ID, 'csv').click()
-        time.sleep(15)
+        click_element(driver, By.ID, "csv", 15, "Save as csv")
 
         # Refresh the screen
         driver.refresh()
