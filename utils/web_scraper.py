@@ -1,7 +1,6 @@
-import sys
 import time
 
-from loguru import logger
+from utils.exceptions_handler import error_exit
 
 
 def click_element(driver, by, selector, sleep_time, error_element):
@@ -10,9 +9,7 @@ def click_element(driver, by, selector, sleep_time, error_element):
         time.sleep(sleep_time)
 
     except Exception as e:
-        logger.error(f"Error when clicking {error_element}. Exception: {e}")
-        logger.info("Process finished")
-        sys.exit()
+        error_exit(f"Error when clicking {error_element}", e)
 
 
 def click_element_from_list(driver, by, selector, sleep_time, element_list_position, error_element):
@@ -22,6 +19,4 @@ def click_element_from_list(driver, by, selector, sleep_time, element_list_posit
         time.sleep(sleep_time)
 
     except Exception as e:
-        logger.error(f"Error when clicking {error_element}. Exception: {e}")
-        logger.info("Process finished")
-        sys.exit()
+        error_exit(f"Error when clicking {error_element}", e)
