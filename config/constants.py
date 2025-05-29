@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Load configuration
-with open('settings.json', 'r') as f:
+with open('./config/settings.json', 'r') as f:
     config = json.load(f)
 
 # Path of downloaded/processed data
