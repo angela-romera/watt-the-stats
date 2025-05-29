@@ -1,7 +1,7 @@
 import pandas as pd
 
 from utils.data_cleaning import load_csv, transform_date, rows_to_skip, transform_to_time
-from utils.exceptions_handler import error_exit
+from utils.exceptions_handler import log_exit
 
 
 def get_invoice_data(file):
@@ -16,7 +16,7 @@ def get_invoice_data(file):
         invoice_df.reset_index(drop=True, inplace=True)
 
     except Exception as e:
-        error_exit("Error when transposing and reorganizing the invoice_df", e)
+        log_exit("Error when transposing and reorganizing the invoice_df", "ERROR", e)
 
     # Transform date cols to correct format
     for col in ['initial_date', 'final_date']:
@@ -27,7 +27,7 @@ def get_invoice_data(file):
         invoice_df['cups'] = invoice_df['cups'].str.strip()
 
     except Exception as e:
-        error_exit("Error when removing blank spaces", e)
+        log_exit("Error when removing blank spaces", "ERROR", e)
 
     # # Add id_client col to invoice_df
     # invoice_df = add_col_from_df(DB_ELEC, invoice_df, 'cups', 'client', 'id', 'id_client')

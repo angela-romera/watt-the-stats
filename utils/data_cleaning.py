@@ -3,7 +3,7 @@ from datetime import time
 
 import pandas as pd
 
-from utils.exceptions_handler import error_exit
+from utils.exceptions_handler import log_exit
 
 
 def load_csv(file_path, skip_rows, headers):
@@ -11,7 +11,7 @@ def load_csv(file_path, skip_rows, headers):
         return pd.read_csv(file_path, skiprows=skip_rows, names=headers)
 
     except Exception as e:
-        error_exit(f"Error in load_csv()", e)
+        log_exit(f"Error in load_csv()", "ERROR", e)
 
 
 def transform_to_time(value):
@@ -34,7 +34,7 @@ def transform_to_time(value):
         return time(hours, minutes, seconds)  # return time object
 
     except Exception as e:
-        error_exit(f"Error in transform_to_time()", e)
+        log_exit(f"Error in transform_to_time()", "ERROR", e)
 
 
 def transform_date(date_str):
@@ -45,7 +45,7 @@ def transform_date(date_str):
         return date_obj.strftime('%Y-%m-%d')
 
     except Exception as e:
-        error_exit(f"Error in transform_date()", e)
+        log_exit(f"Error in transform_date()", "ERROR", e)
 
 
 def rows_to_skip(file):
@@ -55,4 +55,4 @@ def rows_to_skip(file):
         return list(range(5, num_rows))  # return a list of indexes to be skipped
 
     except Exception as e:
-        error_exit(f"Error in rows_to_skip()", e)
+        log_exit(f"Error in rows_to_skip()", "ERROR", e)

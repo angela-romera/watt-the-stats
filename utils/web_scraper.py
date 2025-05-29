@@ -1,6 +1,6 @@
 import time
 
-from utils.exceptions_handler import error_exit
+from utils.exceptions_handler import log_exit
 
 
 def click_element(driver, by, selector, sleep_time, error_element):
@@ -9,7 +9,7 @@ def click_element(driver, by, selector, sleep_time, error_element):
         time.sleep(sleep_time)
 
     except Exception as e:
-        error_exit(f"Error when clicking {error_element}", e)
+        log_exit(f"Error when clicking {error_element}", "ERROR", e)
 
 
 def click_element_from_list(driver, by, selector, sleep_time, element_list_position, error_element):
@@ -19,4 +19,4 @@ def click_element_from_list(driver, by, selector, sleep_time, element_list_posit
         time.sleep(sleep_time)
 
     except Exception as e:
-        error_exit(f"Error when clicking {error_element}", e)
+        log_exit(f"Error when clicking {error_element}", "ERROR", e)
