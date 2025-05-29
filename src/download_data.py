@@ -11,7 +11,7 @@ def download_csv(driver):
         # Select period
         time.sleep(15)
         click_element_from_list(driver, By.XPATH, "//span[@class='chosen-single']", 5, 1, "Period dropdown")
-        click_element(driver, By.XPATH, f"li.active-result[data-option-array-index='{idx}]'", 15, "Select period")
+        click_element(driver, By.CSS_SELECTOR, f"li.active-result[data-option-array-index='{idx}']", 15, "Select period")
 
         # Download sheet button
         click_element(driver, By.XPATH, "//a[@id='downloadSheet']", 3, "Download sheet button")
