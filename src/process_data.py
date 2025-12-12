@@ -29,9 +29,6 @@ def get_invoice_data(file):
     except Exception as e:
         log_exit("Error when removing blank spaces", "ERROR", e)
 
-    # # Add id_client col to invoice_df
-    # invoice_df = add_col_from_df(DB_ELEC, invoice_df, 'cups', 'client', 'id', 'id_client')
-
     return invoice_df
 
 
