@@ -10,7 +10,7 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
-
+from selenium.common.exceptions import NoSuchElementException
 from config.constants import URL, DOWNLOADS_PATH, USERNAME_VAL, PASSWORD_VAL
 from src.download_data import download_csv
 from utils.web_scraper import click_element
@@ -27,13 +27,13 @@ def main():
 
     logger.info("Process started")
 
-    # WebDriver options
+    # webdriver options
     options = EdgeOptions()
     options.use_chromium = True
     options.add_experimental_option("prefs", {"download.default_directory": DOWNLOADS_PATH})
 
-    # Install last version of Edge webdriver
-    driver = webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()), options=options)
+    # Get webdriver
+    driver = webdriver.Chrome(options=options)
 
     # Send a GET request to the URL
     response = requests.get(URL)
@@ -45,10 +45,10 @@ def main():
         # Wait for the cookies popup to be present
         cookies_popup = WebDriverWait(driver, 30).until(ec.presence_of_element_located((By.ID, "truste-consent-content")))
         # Find the button to reject or close the cookies popup
-        reject_button = cookies_popup.find_element(By.XPATH, "//button[text()='Rechazar']")
-        if reject_button:
+        try:
+            reject_button = cookies_popup.find_element(By.XPATH, "//button[text()='Rechazar']")
             reject_button.click()
-        else:
+        except NoSuchElementException:
             pass
 
         # Find the username and password input fields
