@@ -1,0 +1,36 @@
+[project]
+name = "watt-the-stats"
+version = "0.1.0"
+description = "Download energy-consumption data from the Energia XXI customer portal."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "loguru>=0.7.3,<1",
+    "python-dotenv>=1.1,<2",
+    "selenium>=4.39,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+    "ruff>=0.14,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
