@@ -1,7 +1,0 @@
-pandas~=2.2.3
-selenium~=4.39.0
-loguru~=0.7.3
-dotenv~=0.9.9
-python-dotenv~=1.0.1
-requests~=2.32.3
-webdriver-manager~=4.0.2
