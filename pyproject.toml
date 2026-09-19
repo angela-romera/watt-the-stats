@@ -1,12 +1,13 @@
 [project]
 name = "watt-the-stats"
 version = "0.1.0"
-description = "Download energy-consumption data from the Energia XXI customer portal."
+description = "Process Energia XXI consumption exports and import them into PostgreSQL."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "loguru>=0.7.3,<1",
     "python-dotenv>=1.1,<2",
+    "psycopg[binary]>=3.2,<4",
     "selenium>=4.39,<5",
 ]
 

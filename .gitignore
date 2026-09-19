@@ -22,6 +22,9 @@ data/downloads/*
 !data/downloads/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+data/imported/
+data/duplicates/
+data/failed/
 
 # Packaging
 build/
