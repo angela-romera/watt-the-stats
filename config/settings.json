@@ -5,5 +5,9 @@
   "wait_timeout_seconds": 30,
   "download_timeout_seconds": 60,
   "periods_to_download": 6,
-  "download_dir": "data/downloads"
+  "download_dir": "data/downloads",
+  "processed_dir": "data/processed",
+  "imported_dir": "data/imported",
+  "duplicates_dir": "data/duplicates",
+  "failed_dir": "data/failed"
 }
