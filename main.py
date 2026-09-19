@@ -1,4 +1,4 @@
-"""Process downloaded CSVs and insert invoice data into PostgreSQL."""
+"""Download consumption CSVs, process them, and insert invoice data into PostgreSQL."""
 
 import argparse
 
@@ -6,12 +6,11 @@ from loguru import logger
 
 from src.config import load_database_settings, load_settings
 from src.process_data import transform_csv, write_staging
-
-# from src.scraper import WebScraper
+from src.scraper import WebScraper
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Upload existing downloads unless processing-only mode is requested."""
+    """Run the full workflow unless processing-only mode is requested."""
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -20,15 +19,17 @@ def main(argv: list[str] | None = None) -> None:
         help="Transform existing CSVs without database writes",
     )
     mode.add_argument(
-        "--upload", action="store_true", help="Transform and insert into PostgreSQL (default)"
+        "--upload",
+        action="store_true",
+        help="Download, transform, and insert into PostgreSQL (default)",
     )
     args = parser.parse_args(argv)
     settings = load_settings()
-    # Download phase disabled; process and insert CSVs already in download_dir.
-    # logger.info("Starting download from {}", settings.url)
-    # with WebScraper(settings) as scraper:
-    #     downloaded_files = scraper.download()
-    # logger.info("Download phase finished: {} file(s) saved", len(downloaded_files))
+    if not args.process_only:
+        logger.info("Starting download from {}", settings.url)
+        with WebScraper(settings) as scraper:
+            downloaded_files = scraper.download()
+        logger.info("Download phase finished: {} file(s) saved", len(downloaded_files))
 
     paths = sorted(settings.download_dir.glob("*.csv"))
     if not paths:

@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -17,19 +17,26 @@ def workflow(tmp_path, monkeypatch):
     upload = Mock(return_value=ImportSummary(imported=1, invoices_inserted=1))
     monkeypatch.setattr(entrypoint, "load_database_settings", database)
     monkeypatch.setattr(importer, "import_files", upload)
+    scraper = MagicMock()
+    scraper.return_value.__enter__.return_value.download.return_value = []
+    monkeypatch.setattr(entrypoint, "WebScraper", scraper)
     return settings, database, upload
 
 
 @pytest.mark.parametrize("args", [[], ["--upload"]])
-def test_upload_modes_import_existing_csvs(tmp_path, workflow, args):
+def test_upload_modes_import_existing_and_downloaded_csvs(tmp_path, workflow, args):
     settings, database, upload = workflow
     paths = files(tmp_path, "invoice.csv")
     (settings.download_dir / "ignored.xls").write_text("ignored")
+    download = entrypoint.WebScraper.return_value.__enter__.return_value.download
+    download.side_effect = lambda: files(tmp_path, "new.csv")
 
     entrypoint.main(args)
 
     database.assert_called_once_with()
-    upload.assert_called_once_with(paths, settings, DATABASE)
+    entrypoint.WebScraper.assert_called_once_with(settings)
+    download.assert_called_once_with()
+    upload.assert_called_once_with(paths + [settings.download_dir / "new.csv"], settings, DATABASE)
 
 
 def test_process_only_does_not_load_database_or_upload(tmp_path, monkeypatch, workflow):
@@ -45,6 +52,7 @@ def test_process_only_does_not_load_database_or_upload(tmp_path, monkeypatch, wo
 
     database.assert_not_called()
     upload.assert_not_called()
+    entrypoint.WebScraper.assert_not_called()
     transform.assert_called_once_with(paths[0])
     staging.assert_called_once_with(invoice, settings.processed_dir / "invoice.json")
     assert paths[0].exists()
