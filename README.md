@@ -29,8 +29,9 @@ does not migrate an existing SQL Server schema. The uploader manages neither
 
 ## Run
 
-The default command processes CSVs already present in `data/downloads`, writes
-validated JSON to `data/processed`, and inserts invoice and detail data into PostgreSQL:
+The default command downloads CSVs from Energia XXI into `data/downloads`, processes
+all CSVs in that folder, writes validated JSON to `data/processed`, and inserts
+invoice and detail data into PostgreSQL:
 
 ```powershell
 uv run python main.py
@@ -43,7 +44,7 @@ staging JSON without connecting to PostgreSQL, use:
 uv run python main.py --process-only
 ```
 
-The browser download code is commented out in `main.py`; runs use existing CSVs.
+`--process-only` skips browser downloads and uses existing CSVs.
 Both folders are configured in `config/settings.json`; reprocessing replaces the
 matching staging JSON files.
 After a confirmed upload (including an existing duplicate), the matching staging
