@@ -52,17 +52,37 @@ class Settings:
     download_timeout_seconds: int
     periods_to_download: int
     download_dir: Path
-    username: str | None
-    password: str | None
+    usernames: list[str]
+    passwords: list[str] = field(repr=False)
     processed_dir: Path = PROJECT_ROOT / "data" / "processed"
     imported_dir: Path = PROJECT_ROOT / "data" / "imported"
     duplicates_dir: Path = PROJECT_ROOT / "data" / "duplicates"
     failed_dir: Path = PROJECT_ROOT / "data" / "failed"
 
 
+def _credential_list(name: str) -> list[str]:
+    value = os.getenv(name)
+    if not value:
+        return []
+    try:
+        entries = json.loads(value)
+    except json.JSONDecodeError:
+        raise ValueError(f"{name} must be a JSON list of non-empty strings") from None
+    if not isinstance(entries, list) or any(
+        not isinstance(entry, str) or not entry.strip() for entry in entries
+    ):
+        raise ValueError(f"{name} must be a JSON list of non-empty strings")
+    return entries
+
+
 def load_settings() -> Settings:
     """Load non-secret settings from JSON and credentials from `.env`."""
     load_dotenv(PROJECT_ROOT / ".env")
+
+    usernames = _credential_list("USER_ENERGIAXXI_LIST")
+    passwords = _credential_list("PWD_ENERGIAXXI_LIST")
+    if len(usernames) != len(passwords):
+        raise ValueError("USER_ENERGIAXXI_LIST and PWD_ENERGIAXXI_LIST must have the same length")
 
     with SETTINGS_FILE.open(encoding="utf-8") as settings_file:
         values = json.load(settings_file)
@@ -87,8 +107,8 @@ def load_settings() -> Settings:
         download_timeout_seconds=int(values.get("download_timeout_seconds", 60)),
         periods_to_download=int(values.get("periods_to_download", 6)),
         download_dir=download_dir.resolve(),
-        username=os.getenv("USER_ENERGIAXXI_1"),
-        password=os.getenv("PWD_ENERGIAXXI_1"),
+        usernames=usernames,
+        passwords=passwords,
         processed_dir=(PROJECT_ROOT / values.get("processed_dir", "data/processed")).resolve(),
         imported_dir=(PROJECT_ROOT / values.get("imported_dir", "data/imported")).resolve(),
         duplicates_dir=(PROJECT_ROOT / values.get("duplicates_dir", "data/duplicates")).resolve(),

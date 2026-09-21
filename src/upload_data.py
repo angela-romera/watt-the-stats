@@ -34,11 +34,12 @@ def missing_details(invoice: Invoice, existing: list[tuple]) -> list[tuple]:
 def upload_invoices(
     invoices: list[Invoice],
     settings: DatabaseSettings,
-    username: str | None,
+    username: str | list[str] | None,
 ) -> UploadResult:
     """Commit the entire batch or roll back; never write login or client records."""
     if not username:
-        raise ValueError("USER_ENERGIAXXI_1 must identify an existing login.username")
+        raise ValueError("USER_ENERGIAXXI_LIST must list existing login.username values")
+    usernames = [username] if isinstance(username, str) else username
     result = UploadResult()
     if not invoices:
         return result
@@ -70,21 +71,21 @@ def upload_invoices(
                 cursor.execute(
                     sql.SQL(
                         "SELECT c.id FROM {client} c JOIN {login} l ON l.id = c.id_login "
-                        "WHERE c.cups = %s AND l.username = %s FOR SHARE OF c, l"
+                        "WHERE c.cups = %s AND l.username = ANY(%s) FOR SHARE OF c, l"
                     ).format(**tables),
-                    (invoice.cups, username),
+                    (invoice.cups, usernames),
                 )
                 clients = cursor.fetchall()
                 if not clients:
                     logger.warning(
                         "Client not found in the database for CUPS {} and the configured "
-                        "username. Add the client record before importing. "
+                        "usernames. Add the client record before importing. "
                         "Upload aborted; this batch will be rolled back.",
                         invoice.cups,
                     )
                 if len(clients) != 1:
                     raise UploadConflict(
-                        "Expected exactly one existing client for CUPS and username"
+                        "Expected exactly one existing client for CUPS and configured usernames"
                     )
                 client_id = clients[0][0]
                 cursor.execute(

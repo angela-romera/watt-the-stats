@@ -16,11 +16,27 @@ uv sync
 Keep credentials in `.env`; never commit that file. A template is provided in
 `.env.example`.
 
-The website credentials are `USER_ENERGIAXXI_1` and `PWD_ENERGIAXXI_1`. PostgreSQL
+The website credentials are two JSON lists in `USER_ENERGIAXXI_LIST` and
+`PWD_ENERGIAXXI_LIST`, paired by position:
+
+```dotenv
+USER_ENERGIAXXI_LIST='["first-user", "second-user"]'
+PWD_ENERGIAXXI_LIST='["first-password", "second-password"]'
+```
+
+Both lists must have the same length and contain non-empty strings. For one
+account, use one-element lists such as `'["my-user"]'` and `'["my-password"]'`;
+replace existing scalar values with this format. Use JSON escaping inside each
+list for double quotes (`\"`) and backslashes (`\\`). Password whitespace is
+preserved. Missing or empty lists are allowed for `--process-only`; downloads
+require at least one credential pair. Invalid list formats or unequal lengths
+are rejected before opening a browser. Credentials are never stored in settings.json.
+
+PostgreSQL
 uses `SERVER_WTS`, `DB_WTS_ELEC`, `USER_DB_WTS`, `PWD_DB_WTS`, and `PORT_DB_WTS`.
 `PORT_DB_WTS` defaults to `5432`; `SCHEMA_DB_WTS` defaults to `public`; and
-`SSLMODE_DB_WTS` defaults to `prefer`. `USER_ENERGIAXXI_1` identifies the existing
-`login.username` whose client is matched by CUPS.
+`SSLMODE_DB_WTS` defaults to `prefer`. Each entry in `USER_ENERGIAXXI_LIST` identifies
+an existing `login.username` whose client can be matched by CUPS.
 
 Initialize a new database with [sql/postgresql_schema.sql](sql/postgresql_schema.sql).
 The script targets PostgreSQL's `public` schema. It is for a new database and
@@ -36,6 +52,12 @@ invoice and detail data into PostgreSQL:
 ```powershell
 uv run python main.py
 ```
+
+Accounts are downloaded sequentially, each in a fresh browser session. Every
+account's contracts use `periods_to_download` from `config/settings.json`.
+All accounts share the configured download and archive folders; numbered filename
+suffixes preserve exports with identical names. A download error stops the run;
+files already downloaded remain available for the next run.
 
 `--upload` is an explicit alias for the default mode. To validate CSVs and write
 staging JSON without connecting to PostgreSQL, use:
@@ -86,7 +108,11 @@ same date and `24.0` is `23:00` on the previous date. Explicit `00:00-01:00`
 ranges use their start. Invoice dates remain exactly as exported; missing hours
 are not invented and repeated local hours are retained.
 
-The uploader resolves an existing client using `USER_ENERGIAXXI_1` and CUPS. It
+The uploader resolves an existing client using CUPS and any username in
+`USER_ENERGIAXXI_LIST`, including for CSVs left over from earlier runs. Exactly one
+client must match across the configured accounts; missing or ambiguous matches
+fail without inserting data. Keep the relevant usernames configured when retrying
+old files. It
 identifies an invoice by the exact client, initial date, and final date. A tariff
 conflict fails. Existing identical details are skipped; a strict subset is filled
 with the missing details. Conflicting or extra stored details fail, and that file's

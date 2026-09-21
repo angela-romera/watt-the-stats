@@ -26,9 +26,18 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     settings = load_settings()
     if not args.process_only:
+        if not settings.usernames:
+            raise ValueError(
+                "USER_ENERGIAXXI_LIST and PWD_ENERGIAXXI_LIST must contain credentials"
+            )
         logger.info("Starting download from {}", settings.url)
-        with WebScraper(settings) as scraper:
-            downloaded_files = scraper.download()
+        downloaded_files = []
+        for index, (username, password) in enumerate(
+            zip(settings.usernames, settings.passwords, strict=True), start=1
+        ):
+            logger.info("Downloading account {} of {}", index, len(settings.usernames))
+            with WebScraper(settings, username, password) as scraper:
+                downloaded_files.extend(scraper.download())
         logger.info("Download phase finished: {} file(s) saved", len(downloaded_files))
 
     paths = sorted(settings.download_dir.glob("*.csv"))

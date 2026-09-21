@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, Mock
+from dataclasses import replace
+from unittest.mock import MagicMock, Mock, call
 
 import pytest
 
@@ -34,7 +35,7 @@ def test_upload_modes_import_existing_and_downloaded_csvs(tmp_path, workflow, ar
     entrypoint.main(args)
 
     database.assert_called_once_with()
-    entrypoint.WebScraper.assert_called_once_with(settings)
+    entrypoint.WebScraper.assert_called_once_with(settings, "existing-user", "test-password")
     download.assert_called_once_with()
     upload.assert_called_once_with(paths + [settings.download_dir / "new.csv"], settings, DATABASE)
 
@@ -88,3 +89,33 @@ def test_conflicting_modes_exit_before_loading_settings(monkeypatch):
 
     assert exc.value.code == 2
     settings.assert_not_called()
+
+
+def test_multiple_accounts_use_separate_browser_sessions(workflow, monkeypatch):
+    settings, _, _ = workflow
+    settings = replace(settings, usernames=["first", "second"], passwords=["one", "two"])
+    monkeypatch.setattr(entrypoint, "load_settings", lambda: settings)
+    sessions = [MagicMock(), MagicMock()]
+    for session in sessions:
+        session.__enter__.return_value.download.return_value = []
+    entrypoint.WebScraper.side_effect = sessions
+
+    entrypoint.main([])
+
+    assert entrypoint.WebScraper.call_args_list == [
+        call(settings, "first", "one"),
+        call(settings, "second", "two"),
+    ]
+    for session in sessions:
+        session.__enter__.return_value.download.assert_called_once_with()
+        session.__exit__.assert_called_once_with(None, None, None)
+
+
+def test_missing_accounts_fail_before_opening_browser(workflow, monkeypatch):
+    settings, _, _ = workflow
+    monkeypatch.setattr(
+        entrypoint, "load_settings", lambda: replace(settings, usernames=[], passwords=[])
+    )
+    with pytest.raises(ValueError, match="must contain credentials"):
+        entrypoint.main([])
+    entrypoint.WebScraper.assert_not_called()

@@ -24,8 +24,10 @@ class ScrapingError(RuntimeError):
 class WebScraper:
     """Log in to Energia XXI and download every available consumption CSV."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, username: str, password: str) -> None:
         self.settings = settings
+        self.username = username
+        self.password = password
         self.driver: WebDriver | None = None
 
     def __enter__(self) -> "WebScraper":
@@ -107,8 +109,8 @@ class WebScraper:
             options.add_argument("--headless=new")
 
     def _login(self) -> None:
-        if not self.settings.username or not self.settings.password:
-            raise ScrapingError("USER_ENERGIAXXI_1 and PWD_ENERGIAXXI_1 must be set in .env")
+        if not self.username or not self.password:
+            raise ScrapingError("An Energia XXI username and password are required")
 
         driver = self._require_driver()
         driver.get(self.settings.url)
@@ -117,9 +119,9 @@ class WebScraper:
             username_field = self.wait.until(EC.visibility_of_element_located((By.ID, "alias")))
             password_field = driver.find_element(By.ID, "password")
             username_field.clear()
-            username_field.send_keys(self.settings.username)
+            username_field.send_keys(self.username)
             password_field.clear()
-            password_field.send_keys(self.settings.password)
+            password_field.send_keys(self.password)
             driver.find_element(By.ID, "loginButton").click()
             self.wait.until(EC.presence_of_element_located((By.ID, "contrato")))
         except TimeoutException as exc:

@@ -82,8 +82,8 @@ def import_files(
     _validate_folders(settings)
     if any(path.resolve().parent != settings.download_dir.resolve() for path in paths):
         raise ValueError("Import files must be directly inside the configured download folder")
-    if not settings.username:
-        raise ValueError("USER_ENERGIAXXI_1 must identify an existing login.username")
+    if not settings.usernames:
+        raise ValueError("USER_ENERGIAXXI_LIST must list existing login.username values")
     summary = ImportSummary()
     destinations = {
         "imported": settings.imported_dir,
@@ -101,7 +101,7 @@ def import_files(
                 final_date=invoice.final_date.isoformat(),
             )
             write_staging(invoice, staging)
-            result = upload_invoices([invoice], database, settings.username)
+            result = upload_invoices([invoice], database, settings.usernames)
         except (
             TransformationError,
             UploadConflict,

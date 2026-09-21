@@ -121,6 +121,29 @@ def test_missing_or_ambiguous_client_rejected(database, invoice, username):
     assert connection.execute("SELECT count(*) FROM invoice").fetchone() == (0,)
 
 
+def test_multiple_accounts_resolve_second_user(database, invoice):
+    settings, connection = database
+    connection.execute("INSERT INTO login (username) VALUES ('second-user')")
+    connection.execute("INSERT INTO client (cups, id_login) VALUES ('ES-SECOND', 2)")
+    result = upload_invoices(
+        [invoice, replace(invoice, cups="ES-SECOND")], settings, ["test-user", "second-user"]
+    )
+    assert result.invoices_inserted == 2
+    assert connection.execute("SELECT id_client FROM invoice ORDER BY id_client").fetchall() == [
+        (1,),
+        (2,),
+    ]
+
+
+def test_shared_cups_across_accounts_rejected(database, invoice):
+    settings, connection = database
+    connection.execute("INSERT INTO login (username) VALUES ('second-user')")
+    connection.execute("INSERT INTO client (cups, id_login) VALUES ('ES-TEST', 2)")
+    with pytest.raises(UploadConflict, match="exactly one"):
+        upload_invoices([invoice], settings, ["test-user", "second-user"])
+    assert connection.execute("SELECT count(*) FROM invoice").fetchone() == (0,)
+
+
 def test_concurrent_uploads_do_not_duplicate(database, invoice):
     settings, connection = database
     barrier = Barrier(2)

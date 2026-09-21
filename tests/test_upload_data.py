@@ -1,11 +1,12 @@
 from datetime import date, time
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 
-from src.config import load_database_settings
+from src.config import DatabaseSettings, load_database_settings
 from src.process_data import Detail, Invoice
-from src.upload_data import UploadConflict, missing_details
+from src.upload_data import UploadConflict, missing_details, upload_invoices
 
 
 def detail(consumption="1.0", price="0.2", cost="0.2"):
@@ -70,6 +71,26 @@ def test_missing_details_preserves_repeated_row_multiplicity():
 
     assert missing_details(invoice(item, item), [stored(item)]) == [stored(item)]
     assert missing_details(invoice(item, item), [stored(item), stored(item)]) == []
+
+
+@pytest.mark.parametrize("clients", [[(2,)], [], [(1,), (2,)]])
+def test_upload_matches_cups_across_configured_users(monkeypatch, clients):
+    connect = MagicMock()
+    monkeypatch.setattr("src.upload_data.psycopg.connect", connect)
+    cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.side_effect = [clients, []]
+    cursor.fetchone.return_value = (10,)
+    database = DatabaseSettings("host", "database", "user", "secret")
+    if len(clients) == 1:
+        result = upload_invoices([invoice(detail())], database, ["first", "second"])
+        assert result.invoices_inserted == 1
+    else:
+        with pytest.raises(UploadConflict, match="exactly one"):
+            upload_invoices([invoice(detail())], database, ["first", "second"])
+        cursor.executemany.assert_not_called()
+    lookup = cursor.execute.call_args_list[2]
+    assert "l.username = ANY(%s)" in lookup.args[0].as_string()
+    assert lookup.args[1] == ("ES123", ["first", "second"])
 
 
 def test_database_settings_hide_password_in_repr(monkeypatch):
