@@ -67,7 +67,7 @@ def patch_success(monkeypatch, outcomes):
     monkeypatch.setattr(importer, "upload_invoices", upload)
 
 
-def test_import_duplicate_and_failed_files_are_classified_and_archived(tmp_path, monkeypatch):
+def test_successful_files_are_deleted_and_failed_files_archived(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     imported, duplicate, failed = files(tmp_path, "imported.csv", "duplicate.csv", "failed.csv")
     patch_success(
@@ -82,8 +82,10 @@ def test_import_duplicate_and_failed_files_are_classified_and_archived(tmp_path,
 
     assert (summary.imported, summary.duplicates, summary.failed, summary.pending) == (1, 1, 1, 0)
     assert not imported.exists() and not duplicate.exists() and not failed.exists()
-    assert (settings.imported_dir / imported.name).exists()
-    assert (settings.duplicates_dir / duplicate.name).exists()
+    assert not settings.imported_dir.exists()
+    assert summary.files[0]["deleted"] is True
+    assert not settings.duplicates_dir.exists()
+    assert summary.files[1]["deleted"] is True
     assert (settings.failed_dir / failed.name).exists()
     assert not (settings.processed_dir / "imported.json").exists()
     assert not (settings.processed_dir / "duplicate.json").exists()
@@ -128,7 +130,7 @@ def test_operational_error_leaves_current_and_remaining_files_pending(tmp_path, 
 def test_archive_failure_keeps_source_pending(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     source = files(tmp_path, "invoice.csv")[0]
-    patch_success(monkeypatch, {source.name: UploadResult(1, 1, 0)})
+    patch_success(monkeypatch, {source.name: UploadConflict("client mismatch")})
     monkeypatch.setattr(
         importer,
         "archive_file",
@@ -140,8 +142,8 @@ def test_archive_failure_keeps_source_pending(tmp_path, monkeypatch):
     assert summary.pending == 1
     assert summary.imported == 0
     assert source.exists()
-    assert summary.files[0]["database_outcome"] == "imported"
-    assert not (settings.processed_dir / "invoice.json").exists()
+    assert summary.files[0]["database_outcome"] == "failed"
+    assert (settings.processed_dir / "invoice.json").exists()
 
 
 def test_staging_cleanup_failure_preserves_committed_outcome(tmp_path, monkeypatch):
@@ -163,8 +165,42 @@ def test_staging_cleanup_failure_preserves_committed_outcome(tmp_path, monkeypat
     assert (summary.imported, summary.failed, summary.pending) == (1, 0, 0)
     assert (summary.invoices_inserted, summary.details_inserted) == (1, 1)
     assert staging.exists()
-    assert (settings.imported_dir / source.name).exists()
+    assert not source.exists()
+    assert not settings.imported_dir.exists()
     assert summary.files[0]["cleanup_error"] == "staging file is locked"
+
+
+@pytest.mark.parametrize(
+    "result", [UploadResult(1, 1, 0), UploadResult(0, 1, 0), UploadResult(0, 0, 1)]
+)
+def test_csv_deletion_failure_is_pending_and_retry_deletes(tmp_path, monkeypatch, result):
+    settings = make_settings(tmp_path)
+    source = files(tmp_path, "invoice.csv")[0]
+    patch_success(monkeypatch, {source.name: result})
+    original_unlink = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        if path == source:
+            raise PermissionError("CSV is locked")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    summary = importer.import_files([source], settings, DATABASE)
+
+    assert summary.pending == 1
+    assert summary.invoices_inserted == result.invoices_inserted
+    assert source.exists()
+    assert "deleted" not in summary.files[0]
+    assert summary.files[0]["database_outcome"] == (
+        "duplicates" if result.invoices_skipped else "imported"
+    )
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    patch_success(monkeypatch, {source.name: UploadResult(0, 0, 1)})
+    retry = importer.import_files([source], settings, DATABASE)
+    assert retry.duplicates == 1
+    assert retry.pending == 0
+    assert not source.exists()
 
 
 def test_successful_files_continue_after_one_file_fails(tmp_path, monkeypatch):
@@ -192,14 +228,14 @@ def test_successful_files_continue_after_one_file_fails(tmp_path, monkeypatch):
 def test_archive_name_collision_preserves_both_originals(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     source = files(tmp_path, "invoice.csv")[0]
-    settings.imported_dir.mkdir(parents=True)
-    (settings.imported_dir / source.name).write_text("older", encoding="utf-8")
-    patch_success(monkeypatch, {source.name: UploadResult(1, 1, 0)})
+    settings.failed_dir.mkdir(parents=True)
+    (settings.failed_dir / source.name).write_text("older", encoding="utf-8")
+    patch_success(monkeypatch, {source.name: UploadConflict("client mismatch")})
 
     importer.import_files([source], settings, DATABASE)
 
-    assert (settings.imported_dir / "invoice.csv").read_text(encoding="utf-8") == "older"
-    assert (settings.imported_dir / "invoice_1.csv").read_text(encoding="utf-8") == "csv"
+    assert (settings.failed_dir / "invoice.csv").read_text(encoding="utf-8") == "older"
+    assert (settings.failed_dir / "invoice_1.csv").read_text(encoding="utf-8") == "csv"
     assert not source.exists()
 
 
@@ -207,7 +243,7 @@ def test_archive_name_collision_preserves_both_originals(tmp_path, monkeypatch):
 def test_archive_copy_failure_leaves_source_pending(tmp_path, monkeypatch, error):
     settings = make_settings(tmp_path)
     source = files(tmp_path, "invoice.csv")[0]
-    patch_success(monkeypatch, {source.name: UploadResult(1, 1, 0)})
+    patch_success(monkeypatch, {source.name: UploadConflict("client mismatch")})
     monkeypatch.setattr(importer.shutil, "copyfileobj", lambda *args: (_ for _ in ()).throw(error))
 
     summary = importer.import_files([source], settings, DATABASE)
@@ -228,7 +264,7 @@ def test_pending_count_accumulates_archive_failure_before_operational_error(tmp_
     def upload(invoices, database, username):
         calls["count"] += 1
         if calls["count"] == 1:
-            return UploadResult(1, 1, 0)
+            raise UploadConflict("client mismatch")
         raise psycopg.OperationalError("connection lost")
 
     monkeypatch.setattr(importer, "upload_invoices", upload)

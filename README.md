@@ -55,7 +55,7 @@ uv run python main.py
 
 Accounts are downloaded sequentially, each in a fresh browser session. Every
 account's contracts use `periods_to_download` from `config/settings.json`.
-All accounts share the configured download and archive folders; numbered filename
+All accounts share the configured download folder; numbered filename
 suffixes preserve exports with identical names. A download error stops the run;
 files already downloaded remain available for the next run.
 
@@ -70,31 +70,33 @@ uv run python main.py --process-only
 Both folders are configured in `config/settings.json`; reprocessing replaces the
 matching staging JSON files.
 After a confirmed upload (including an existing duplicate), the matching staging
-JSON is deleted because subsequent imports use the CSV and database. Failed or
+JSON and source CSV are deleted after the database transaction completes. Failed or
 uncertain uploads retain staging JSON for inspection. A cleanup error is logged
 and recorded in the import report without changing the committed database outcome.
 Processing-only mode retains its JSON output; `import_report.json` is kept.
 
-Upload mode commits each CSV separately, then moves the original CSV according to
-its outcome. The folders are configured in `config/settings.json`:
+Upload mode commits each CSV separately, then handles the original CSV according to
+its outcome:
 
-- `data/imported`: the transaction inserted an invoice or missing hourly details.
-- `data/duplicates`: every row already exists; no insert was needed.
+- Imported: the transaction inserted an invoice or missing hourly details; delete the CSV.
+- Duplicate: every row already exists; delete the CSV after database verification.
 - `data/failed`: invalid CSV data, missing/ambiguous clients, or conflicting stored
   values prevented the file from importing. That file's transaction is rolled back;
   other files continue.
 
-If an archive filename already exists, a numbered suffix preserves both files.
-Files move only after a confirmed outcome. Connection errors stop the run and leave
+The failed folder is configured in `config/settings.json`. If a failed archive
+filename already exists, a numbered suffix preserves both files. The legacy
+`imported_dir` and `duplicates_dir` settings are unused; existing archives are untouched.
+Files are deleted or moved only after a confirmed outcome. Connection errors stop the run and leave
 the current and remaining files in downloads; a lost connection during commit can
-have an unknown outcome, so the next run checks the database again. Archive failures
+have an unknown outcome, so the next run checks the database again. CSV deletion or archive failures
 also leave the source in downloads even if its database transaction already committed.
-`data/processed/import_report.json` records filenames, results, errors, and totals
+`data/processed/import_report.json` records filenames, results, deletion confirmation, errors, and totals
 for the latest upload run. A run with failures or pending files exits with status 1.
 The report is informational; duplicate detection compares parsed CSV data with
 database records and does not depend on filenames or previous reports.
 To retry a failed file after fixing the problem, move it back into `data/downloads`.
-Processing-only mode does not move files. `.xls` files are not imported or moved.
+Processing-only mode does not move or delete CSVs. `.xls` files are not imported or deleted.
 
 ## Transformation and PostgreSQL upload
 
@@ -135,7 +137,7 @@ src/config.py          Settings and environment loading
 src/scraper.py          Login, browser setup, and CSV download workflow
 src/process_data.py    CSV validation, transformation, and staging output
 src/upload_data.py     PostgreSQL upload workflow
-src/import_files.py    Per-file upload outcomes and CSV archiving
+src/import_files.py    Per-file upload outcomes, successful CSV deletion, and failed CSV archiving
 main.py               Application entry point
 ```
 

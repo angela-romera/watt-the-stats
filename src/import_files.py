@@ -1,4 +1,4 @@
-"""Import and archive individual CSVs according to their committed database outcome."""
+"""Delete confirmed imports and archive failed CSVs for inspection."""
 
 import json
 import os
@@ -60,8 +60,6 @@ def _validate_folders(settings: Settings) -> None:
         for path in (
             settings.download_dir,
             settings.processed_dir,
-            settings.imported_dir,
-            settings.duplicates_dir,
             settings.failed_dir,
         )
     ]
@@ -85,11 +83,6 @@ def import_files(
     if not settings.usernames:
         raise ValueError("USER_ENERGIAXXI_LIST must list existing login.username values")
     summary = ImportSummary()
-    destinations = {
-        "imported": settings.imported_dir,
-        "duplicates": settings.duplicates_dir,
-        "failed": settings.failed_dir,
-    }
     for index, path in enumerate(paths):
         record = {"file": path.name}
         staging = settings.processed_dir / f"{path.stem}.json"
@@ -134,7 +127,7 @@ def import_files(
             summary.details_inserted += result.details_inserted
             record["invoices_inserted"] = result.invoices_inserted
             record["details_inserted"] = result.details_inserted
-            # The uploader has committed; subsequent runs use the CSV and database.
+            # The uploader has committed, including verification of duplicates.
             try:
                 staging.unlink(missing_ok=True)
             except OSError as exc:
@@ -143,19 +136,24 @@ def import_files(
                     "Database upload confirmed, but could not remove {}: {}", staging, exc
                 )
         try:
-            target = archive_file(path, destinations[status])
+            if status == "failed":
+                target = archive_file(path, settings.failed_dir)
+                record["archive"] = str(target)
+            else:
+                path.unlink()
+                record["deleted"] = True
         except OSError as exc:
             summary.pending += 1
             record.update(status="pending", database_outcome=status, reason=str(exc))
             logger.error(
-                "{} outcome is {}, but archiving failed; source retained: {}",
+                "{} outcome is {}, but file cleanup failed; source retained: {}",
                 path.name,
                 status,
                 exc,
             )
         else:
             setattr(summary, status, getattr(summary, status) + 1)
-            record.update(status=status, archive=str(target))
+            record["status"] = status
             logger.info("{} -> {}", path.name, status)
         summary.files.append(record)
     report = settings.processed_dir / "import_report.json"
