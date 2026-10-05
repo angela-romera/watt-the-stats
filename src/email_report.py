@@ -42,6 +42,7 @@ class InvoiceReport:
     medium_consumption_kwh: Decimal
     expensive_consumption_kwh: Decimal
     previous_period: "PreviousPeriod | None"
+    previous_invoice: "PreviousInvoice | None"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,15 @@ class PreviousPeriod:
     cheap_consumption_kwh: Decimal
     medium_consumption_kwh: Decimal
     expensive_consumption_kwh: Decimal
+
+
+@dataclass(frozen=True)
+class PreviousInvoice:
+    invoice_id: int
+    initial_date: date
+    final_date: date
+    consumption_kwh: Decimal
+    cost_eur: Decimal
 
 
 def latest_invoice_recipient(
@@ -167,6 +177,7 @@ def latest_invoice_report(database: DatabaseSettings, client_id: int = 1) -> Inv
         _one_year_earlier(initial_date),
         _one_year_earlier(final_date),
     )
+    previous_invoice = _previous_invoice_summary(database, client_id, initial_date)
     return InvoiceReport(
         invoice_id=invoice_id,
         email_to=email_to.strip(),
@@ -179,6 +190,7 @@ def latest_invoice_report(database: DatabaseSettings, client_id: int = 1) -> Inv
         medium_consumption_kwh=Decimal(medium_consumption_wh) / Decimal("1000"),
         expensive_consumption_kwh=Decimal(expensive_consumption_wh) / Decimal("1000"),
         previous_period=previous_period,
+        previous_invoice=previous_invoice,
     )
 
 
@@ -236,6 +248,46 @@ def _previous_period_summary(
     )
 
 
+def _previous_invoice_summary(
+    database: DatabaseSettings, client_id: int, current_initial_date: date
+) -> PreviousInvoice | None:
+    """Return the invoice ending most recently before the current invoice starts."""
+    tables = {
+        name: sql.Identifier(database.schema, name) for name in ("invoice", "detail")
+    }
+    with psycopg.connect(
+        host=database.host,
+        dbname=database.dbname,
+        user=database.user,
+        password=database.password,
+        port=database.port,
+        sslmode=database.sslmode,
+        connect_timeout=10,
+    ) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL(
+                "SELECT i.id, i.initial_date, i.final_date, "
+                "COALESCE(SUM(d.consumption), 0), COALESCE(SUM(d.cost_per_hour), 0) "
+                "FROM {invoice} i LEFT JOIN {detail} d ON d.id_invoice = i.id "
+                "WHERE i.id_client = %s AND i.final_date < %s "
+                "GROUP BY i.id, i.initial_date, i.final_date "
+                "ORDER BY i.final_date DESC, i.initial_date DESC LIMIT 1"
+            ).format(**tables),
+            (client_id, current_initial_date),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    invoice_id, initial_date, final_date, consumption_wh, cost_eur = row
+    return PreviousInvoice(
+        invoice_id=invoice_id,
+        initial_date=initial_date,
+        final_date=final_date,
+        consumption_kwh=Decimal(consumption_wh) / Decimal("1000"),
+        cost_eur=Decimal(cost_eur),
+    )
+
+
 def _one_year_earlier(value: date) -> date:
     """Shift a date back one calendar year, including leap-day periods."""
     year = value.year - 1
@@ -246,6 +298,12 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
     """Build the plain-text initial version of an invoice summary email."""
     consumption = report.consumption_kwh.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     cost = report.cost_eur.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    _daily_consumption, daily_cost = _daily_averages(
+        report.consumption_kwh,
+        report.cost_eur,
+        report.initial_date,
+        report.final_date,
+    )
     bands = (
         (
             f"Preu baix (≤ {CHEAP_PRICE_THRESHOLD_EUR_PER_KWH} EUR/kWh)",
@@ -270,6 +328,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         for label, amount, _color in bands
     )
     comparison_text, comparison_html, comparison_bands = _previous_period_content(report, bands)
+    previous_invoice_text, previous_invoice_html = _previous_invoice_content(report)
     chart_cid = "consum-per-preu"
     comparison_chart_cid = "comparativa-consum-per-preu"
     message = EmailMessage()
@@ -284,9 +343,11 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"Tarifa: {report.tariff}\n"
         f"Consum total: {consumption} kWh\n"
         f"Cost total: {cost} EUR\n"
+        f"Cost mitjà diari: {daily_cost} EUR/dia\n"
         "\nDistribució del consum segons el preu:\n"
         f"{distribution}\n"
         f"{comparison_text}"
+        f"{previous_invoice_text}"
     )
     legend = "".join(
         "<li>"
@@ -304,12 +365,14 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"{report.final_date:%d/%m/%Y}<br>"
         f"<strong>Tarifa:</strong> {escape(report.tariff)}<br>"
         f"<strong>Consum total:</strong> {consumption} kWh<br>"
-        f"<strong>Cost total:</strong> {cost} EUR</p>"
+        f"<strong>Cost total:</strong> {cost} EUR<br>"
+        f"<strong>Cost mitjà diari:</strong> {daily_cost} EUR/dia</p>"
         "<h3>Distribució del consum segons el preu</h3>"
         f"<img src=\"cid:{chart_cid}\" alt=\"Gràfic de sectors del consum per preu\" "
         "width=\"280\" height=\"280\">"
         f"<ul>{legend}</ul>"
         f"{comparison_html}"
+        f"{previous_invoice_html}"
         "</body></html>",
         subtype="html",
     )
@@ -331,6 +394,57 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
             disposition="inline",
         )
     return message
+
+
+def _previous_invoice_content(report: InvoiceReport) -> tuple[str, str]:
+    """Build the optional daily-use comparison with the immediately prior invoice."""
+    previous = report.previous_invoice
+    if previous is None:
+        return "", ""
+    current_kwh_day, current_eur_day = _daily_averages(
+        report.consumption_kwh,
+        report.cost_eur,
+        report.initial_date,
+        report.final_date,
+    )
+    previous_kwh_day, previous_eur_day = _daily_averages(
+        previous.consumption_kwh,
+        previous.cost_eur,
+        previous.initial_date,
+        previous.final_date,
+    )
+    text = (
+        "\nComparativa amb la factura anterior:\n"
+        f"Factura actual ({report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}): "
+        f"{current_kwh_day} kWh/dia; {current_eur_day} EUR/dia\n"
+        f"Factura anterior ({previous.initial_date:%d/%m/%Y} - {previous.final_date:%d/%m/%Y}): "
+        f"{previous_kwh_day} kWh/dia; {previous_eur_day} EUR/dia\n"
+    )
+    html = (
+        "<h3>Comparativa amb la factura anterior</h3><ul>"
+        f"<li><strong>Factura actual</strong> ({report.initial_date:%d/%m/%Y} - "
+        f"{report.final_date:%d/%m/%Y}): {current_kwh_day} kWh/dia; "
+        f"{current_eur_day} EUR/dia</li>"
+        f"<li><strong>Factura anterior</strong> ({previous.initial_date:%d/%m/%Y} - "
+        f"{previous.final_date:%d/%m/%Y}): {previous_kwh_day} kWh/dia; "
+        f"{previous_eur_day} EUR/dia</li>"
+        "</ul>"
+    )
+    return text, html
+
+
+def _daily_averages(
+    consumption_kwh: Decimal,
+    cost_eur: Decimal,
+    initial_date: date,
+    final_date: date,
+) -> tuple[Decimal, Decimal]:
+    """Return average kWh/day and EUR/day for an inclusive date range."""
+    days = (final_date - initial_date).days + 1
+    return (
+        (consumption_kwh / days).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+        (cost_eur / days).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+    )
 
 
 def _previous_period_content(

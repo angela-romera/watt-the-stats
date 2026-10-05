@@ -79,7 +79,7 @@ def test_latest_invoice_report_sums_wh_and_cost(monkeypatch):
             "1000",
             "34.5",
         ),
-        additional_rows=[None],
+        additional_rows=[None, None],
     )
 
     report = latest_invoice_report(DATABASE)
@@ -116,7 +116,7 @@ def test_send_invoice_report_has_kwh_and_eur_totals(monkeypatch):
             "1000",
             "34.5",
         ),
-        additional_rows=[None],
+        additional_rows=[None, None],
     )
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
@@ -126,6 +126,7 @@ def test_send_invoice_report_has_kwh_and_eur_totals(monkeypatch):
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     assert "Consum total: 1.235 kWh" in message.get_content()
     assert "Cost total: 42.12 EUR" in message.get_content()
+    assert "Cost mitjà diari: 1.36 EUR/dia" in message.get_content()
     assert "Preu baix (≤ 0.15 EUR/kWh): 0.200 kWh (16.2%)" in message.get_content()
     assert "Preu mitjà (> 0.15 i < 0.25 EUR/kWh): 1.000 kWh (81.0%)" in message.get_content()
     assert "Preu alt (≥ 0.25 EUR/kWh): 0.035 kWh (2.8%)" in message.get_content()
@@ -136,7 +137,7 @@ def test_send_invoice_report_has_kwh_and_eur_totals(monkeypatch):
     assert all(chart.get_payload(decode=True).startswith(b"\x89PNG\r\n\x1a\n") for chart in charts)
 
 
-def test_report_includes_previous_year_summary_when_detail_dates_exist(monkeypatch):
+def test_report_includes_previous_year_price_band_chart_when_detail_dates_exist(monkeypatch):
     database_cursor(
         monkeypatch,
         (
@@ -151,7 +152,7 @@ def test_report_includes_previous_year_summary_when_detail_dates_exist(monkeypat
             "500",
             "0",
         ),
-        additional_rows=[("200", "500", "100")],
+        additional_rows=[("200", "500", "100"), None],
     )
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
@@ -169,3 +170,44 @@ def test_report_includes_previous_year_summary_when_detail_dates_exist(monkeypat
     assert 'src="cid:comparativa-consum-per-preu"' in html
     charts = [part for part in message.walk() if part.get_content_type() == "image/png"]
     assert len(charts) == 2
+
+
+def test_report_compares_daily_values_with_previous_invoice(monkeypatch):
+    cursor = database_cursor(
+        monkeypatch,
+        (
+            27,
+            "client@example.com",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
+            "2.0TD",
+            "3100",
+            "62",
+            "1000",
+            "1000",
+            "1100",
+        ),
+        additional_rows=[
+            None,
+            (26, date(2025, 12, 1), date(2025, 12, 10), "1000", "20"),
+        ],
+    )
+    smtp = MagicMock()
+    monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
+
+    send_invoice_report(DATABASE, EMAIL)
+
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert "Comparativa amb la factura anterior" in message.get_content()
+    assert (
+        "Factura actual (01/01/2026 - 31/01/2026): 0.100 kWh/dia; 2.00 EUR/dia"
+        in message.get_content()
+    )
+    assert (
+        "Factura anterior (01/12/2025 - 10/12/2025): 0.100 kWh/dia; 2.00 EUR/dia"
+        in message.get_content()
+    )
+    query = cursor.execute.call_args_list[2].args[0].as_string()
+    assert "i.final_date < %s" in query
+    assert "ORDER BY i.final_date DESC, i.initial_date DESC" in query
+    assert cursor.execute.call_args_list[2].args[1] == (1, date(2026, 1, 1))
