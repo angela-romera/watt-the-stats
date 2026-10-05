@@ -4,7 +4,8 @@ import argparse
 
 from loguru import logger
 
-from src.config import load_database_settings, load_settings
+from src.config import load_database_settings, load_email_settings, load_settings
+from src.email_report import send_empty_invoice_report, send_invoice_report
 from src.process_data import transform_csv, write_staging
 from src.scraper import WebScraper
 
@@ -23,7 +24,37 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Download, transform, and insert into PostgreSQL (default)",
     )
+    mode.add_argument(
+        "--send-empty-report",
+        action="store_true",
+        help="Email an empty report for client 1's latest uploaded invoice",
+    )
+    mode.add_argument(
+        "--send-report",
+        action="store_true",
+        help="Email client 1 a consumption and cost summary for its latest invoice",
+    )
     args = parser.parse_args(argv)
+    if args.send_empty_report:
+        recipient = send_empty_invoice_report(
+            load_database_settings(), load_email_settings(), client_id=1
+        )
+        logger.info(
+            "Sent empty invoice report for invoice {} to {}",
+            recipient.invoice_id,
+            recipient.email_to,
+        )
+        return
+    if args.send_report:
+        report = send_invoice_report(load_database_settings(), load_email_settings(), client_id=1)
+        logger.info(
+            "Sent invoice report for invoice {} to {}: {} kWh, {} EUR",
+            report.invoice_id,
+            report.email_to,
+            report.consumption_kwh,
+            report.cost_eur,
+        )
+        return
     settings = load_settings()
     if not args.process_only:
         if not settings.usernames:
