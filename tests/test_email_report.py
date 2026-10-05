@@ -79,6 +79,7 @@ def test_latest_invoice_report_sums_wh_and_cost(monkeypatch):
             "1000",
             "34.5",
         ),
+        additional_rows=[None],
     )
 
     report = latest_invoice_report(DATABASE)
@@ -115,6 +116,7 @@ def test_send_invoice_report_has_kwh_and_eur_totals(monkeypatch):
             "1000",
             "34.5",
         ),
+        additional_rows=[None],
     )
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
@@ -132,3 +134,38 @@ def test_send_invoice_report_has_kwh_and_eur_totals(monkeypatch):
     charts = [part for part in message.walk() if part.get_content_type() == "image/png"]
     assert len(charts) == 1
     assert all(chart.get_payload(decode=True).startswith(b"\x89PNG\r\n\x1a\n") for chart in charts)
+
+
+def test_report_includes_previous_year_summary_when_detail_dates_exist(monkeypatch):
+    database_cursor(
+        monkeypatch,
+        (
+            27,
+            "client@example.com",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
+            "2.0TD",
+            "1000",
+            "10",
+            "500",
+            "500",
+            "0",
+        ),
+        additional_rows=[("200", "500", "100")],
+    )
+    smtp = MagicMock()
+    monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
+
+    send_invoice_report(DATABASE, EMAIL)
+
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert "Preu baix — període actual: 0.500 kWh" in message.get_content()
+    assert "Preu baix — any anterior: 0.200 kWh" in message.get_content()
+    assert "Preu mitjà — període actual: 0.500 kWh" in message.get_content()
+    assert "Preu mitjà — any anterior: 0.500 kWh" in message.get_content()
+    assert "Preu alt — període actual: 0.000 kWh" in message.get_content()
+    assert "Preu alt — any anterior: 0.100 kWh" in message.get_content()
+    html = message.get_body("html").get_content()
+    assert 'src="cid:comparativa-consum-per-preu"' in html
+    charts = [part for part in message.walk() if part.get_content_type() == "image/png"]
+    assert len(charts) == 2

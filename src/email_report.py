@@ -3,6 +3,7 @@
 import smtplib
 import struct
 import zlib
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -37,6 +38,14 @@ class InvoiceReport:
     tariff: str
     consumption_kwh: Decimal
     cost_eur: Decimal
+    cheap_consumption_kwh: Decimal
+    medium_consumption_kwh: Decimal
+    expensive_consumption_kwh: Decimal
+    previous_period: "PreviousPeriod | None"
+
+
+@dataclass(frozen=True)
+class PreviousPeriod:
     cheap_consumption_kwh: Decimal
     medium_consumption_kwh: Decimal
     expensive_consumption_kwh: Decimal
@@ -152,6 +161,12 @@ def latest_invoice_report(database: DatabaseSettings, client_id: int = 1) -> Inv
     ) = row
     if not isinstance(email_to, str) or not email_to.strip():
         raise ValueError(f"Client {client_id} has no email_to address")
+    previous_period = _previous_period_summary(
+        database,
+        client_id,
+        _one_year_earlier(initial_date),
+        _one_year_earlier(final_date),
+    )
     return InvoiceReport(
         invoice_id=invoice_id,
         email_to=email_to.strip(),
@@ -163,7 +178,68 @@ def latest_invoice_report(database: DatabaseSettings, client_id: int = 1) -> Inv
         cheap_consumption_kwh=Decimal(cheap_consumption_wh) / Decimal("1000"),
         medium_consumption_kwh=Decimal(medium_consumption_wh) / Decimal("1000"),
         expensive_consumption_kwh=Decimal(expensive_consumption_wh) / Decimal("1000"),
+        previous_period=previous_period,
     )
+
+
+def _previous_period_summary(
+    database: DatabaseSettings,
+    client_id: int,
+    initial_date: date,
+    final_date: date,
+) -> PreviousPeriod | None:
+    """Summarize the previous year's matching dates from detail rows."""
+    tables = {
+        name: sql.Identifier(database.schema, name) for name in ("invoice", "detail")
+    }
+    with psycopg.connect(
+        host=database.host,
+        dbname=database.dbname,
+        user=database.user,
+        password=database.password,
+        port=database.port,
+        sslmode=database.sslmode,
+        connect_timeout=10,
+    ) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL(
+                "SELECT COALESCE(SUM(d.consumption) FILTER (WHERE d.price <= %s), 0), "
+                "COALESCE(SUM(d.consumption) FILTER "
+                "(WHERE d.price > %s AND d.price < %s), 0), "
+                "COALESCE(SUM(d.consumption) FILTER (WHERE d.price >= %s), 0) "
+                "FROM {invoice} i JOIN {detail} d ON d.id_invoice = i.id "
+                "WHERE i.id_client = %s AND d.date >= %s AND d.date <= %s "
+                "HAVING COUNT(d.id) > 0"
+            ).format(**tables),
+            (
+                CHEAP_PRICE_THRESHOLD_EUR_PER_KWH,
+                CHEAP_PRICE_THRESHOLD_EUR_PER_KWH,
+                EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH,
+                EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH,
+                client_id,
+                initial_date,
+                final_date,
+            ),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    (
+        cheap_consumption_wh,
+        medium_consumption_wh,
+        expensive_consumption_wh,
+    ) = row
+    return PreviousPeriod(
+        cheap_consumption_kwh=Decimal(cheap_consumption_wh) / Decimal("1000"),
+        medium_consumption_kwh=Decimal(medium_consumption_wh) / Decimal("1000"),
+        expensive_consumption_kwh=Decimal(expensive_consumption_wh) / Decimal("1000"),
+    )
+
+
+def _one_year_earlier(value: date) -> date:
+    """Shift a date back one calendar year, including leap-day periods."""
+    year = value.year - 1
+    return date(year, value.month, min(value.day, monthrange(year, value.month)[1]))
 
 
 def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
@@ -193,7 +269,9 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
         for label, amount, _color in bands
     )
+    comparison_text, comparison_html, comparison_bands = _previous_period_content(report, bands)
     chart_cid = "consum-per-preu"
+    comparison_chart_cid = "comparativa-consum-per-preu"
     message = EmailMessage()
     message["From"] = sender
     message["To"] = report.email_to
@@ -208,6 +286,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"Cost total: {cost} EUR\n"
         "\nDistribució del consum segons el preu:\n"
         f"{distribution}\n"
+        f"{comparison_text}"
     )
     legend = "".join(
         "<li>"
@@ -230,6 +309,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"<img src=\"cid:{chart_cid}\" alt=\"Gràfic de sectors del consum per preu\" "
         "width=\"280\" height=\"280\">"
         f"<ul>{legend}</ul>"
+        f"{comparison_html}"
         "</body></html>",
         subtype="html",
     )
@@ -241,7 +321,80 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         filename="distribucio-consum-per-preu.png",
         disposition="inline",
     )
+    if comparison_bands is not None:
+        message.get_payload()[-1].add_related(
+            _price_band_comparison_png([(amount, color) for _label, amount, color in comparison_bands]),
+            maintype="image",
+            subtype="png",
+            cid=f"<{comparison_chart_cid}>",
+            filename="comparativa-consum-per-preu.png",
+            disposition="inline",
+        )
     return message
+
+
+def _previous_period_content(
+    report: InvoiceReport,
+    current_bands: tuple[tuple[str, Decimal, str], ...],
+) -> tuple[
+    str,
+    str,
+    tuple[tuple[str, Decimal, str], ...] | None,
+]:
+    """Build the optional current-versus-previous-year price-band comparison."""
+    previous = report.previous_period
+    if previous is None:
+        return "", "", None
+    bands = (
+        (
+            f"Preu baix (≤ {CHEAP_PRICE_THRESHOLD_EUR_PER_KWH} EUR/kWh)",
+            previous.cheap_consumption_kwh,
+            CHEAP_PRICE_COLOR,
+        ),
+        (
+            f"Preu mitjà (> {CHEAP_PRICE_THRESHOLD_EUR_PER_KWH} i < "
+            f"{EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH} EUR/kWh)",
+            previous.medium_consumption_kwh,
+            MEDIUM_PRICE_COLOR,
+        ),
+        (
+            f"Preu alt (≥ {EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH} EUR/kWh)",
+            previous.expensive_consumption_kwh,
+            EXPENSIVE_PRICE_COLOR,
+        ),
+    )
+    comparison_bands = (
+        ("Preu baix — període actual", current_bands[0][1], "#2E7D32"),
+        ("Preu baix — any anterior", bands[0][1], "#81C784"),
+        ("Preu mitjà — període actual", current_bands[1][1], "#F9A825"),
+        ("Preu mitjà — any anterior", bands[1][1], "#FFE082"),
+        ("Preu alt — període actual", current_bands[2][1], "#C62828"),
+        ("Preu alt — any anterior", bands[2][1], "#EF9A9A"),
+    )
+    comparison_text = "\n".join(
+        f"- {label}: {amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
+        for label, amount, _color in comparison_bands
+    )
+    comparison_legend = "".join(
+        "<li>"
+        f"<span style=\"color: {color};\">&#9632;</span> {label}: "
+        f"{amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
+        "</li>"
+        for label, amount, color in comparison_bands
+    )
+    comparison_chart_cid = "comparativa-consum-per-preu"
+    text = (
+        "\nComparativa del consum per franja de preu:\n"
+        f"{comparison_text}\n"
+    )
+    html = (
+        "<h3>Comparativa del consum per franja de preu</h3>"
+        f"<img src=\"cid:{comparison_chart_cid}\" "
+        "alt=\"Gràfic de columnes del consum per franja de preu i període\" "
+        "width=\"360\" height=\"280\">"
+        f"<ul>{comparison_legend}</ul>"
+    )
+    return text, html, comparison_bands
 
 
 def _consumption_percentage(amount: Decimal, total: Decimal) -> Decimal:
@@ -277,6 +430,43 @@ def _pie_chart_png(bands: list[tuple[Decimal, str]]) -> bytes:
                 if portion < cumulative or index == len(rgb_bands) - 1:
                     row.extend(color)
                     break
+        rows.append(bytes(row))
+    payload = zlib.compress(b"".join(rows), level=9)
+    return b"".join(
+        (
+            b"\x89PNG\r\n\x1a\n",
+            _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)),
+            _png_chunk(b"IDAT", payload),
+            _png_chunk(b"IEND", b""),
+        )
+    )
+
+
+def _price_band_comparison_png(bands: list[tuple[Decimal, str]]) -> bytes:
+    """Create a six-column PNG chart in the supplied low-to-high price order."""
+    size = 360
+    baseline = 235
+    maximum_height = 180
+    maximum = max((amount for amount, _color in bands), default=Decimal("1"))
+    maximum = max(maximum, Decimal("1"))
+    bar_left_edges = (25, 80, 135, 190, 245, 300)
+    bar_width = 35
+    bar_specs = [
+        (left, int(amount / maximum * maximum_height), _hex_to_rgb(color))
+        for left, (amount, color) in zip(bar_left_edges, bands, strict=True)
+    ]
+    rows = []
+    for y in range(size):
+        row = bytearray(b"\x00")
+        for x in range(size):
+            pixel = (255, 255, 255)
+            if y == baseline and 15 <= x <= 345:
+                pixel = (80, 80, 80)
+            for left, height, color in bar_specs:
+                if left <= x < left + bar_width and baseline - height <= y < baseline:
+                    pixel = color
+                    break
+            row.extend(pixel)
         rows.append(bytes(row))
     payload = zlib.compress(b"".join(rows), level=9)
     return b"".join(
