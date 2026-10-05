@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import load_settings
+from src.config import load_email_settings, load_settings
 
 
 class SettingsTests(unittest.TestCase):
@@ -63,3 +63,19 @@ def test_reject_mismatched_credentials(credential_env):
 def test_missing_credentials_allow_processing(credential_env):
     settings = load_settings()
     assert settings.usernames == settings.passwords == []
+
+
+def test_email_settings_require_and_hide_app_password(monkeypatch):
+    monkeypatch.setattr("src.config.load_dotenv", lambda *_args: None)
+    for name in ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_APP_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValueError, match="SMTP_APP_PASSWORD"):
+        load_email_settings()
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "ohm.my.god.ep@gmail.com")
+    monkeypatch.setenv("SMTP_APP_PASSWORD", "app-password")
+    settings = load_email_settings()
+    assert settings.sender == "ohm.my.god.ep@gmail.com"
+    assert "app-password" not in repr(settings)

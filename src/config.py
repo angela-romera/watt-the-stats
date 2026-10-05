@@ -22,6 +22,14 @@ class DatabaseSettings:
     sslmode: str = "prefer"
 
 
+@dataclass(frozen=True)
+class EmailSettings:
+    sender: str
+    password: str = field(repr=False)
+    host: str
+    port: int
+
+
 def load_database_settings() -> DatabaseSettings:
     """Require PostgreSQL credentials only when an upload is requested."""
     load_dotenv(PROJECT_ROOT / ".env")
@@ -40,6 +48,27 @@ def load_database_settings() -> DatabaseSettings:
         port=port,
         schema=os.getenv("SCHEMA_DB_WTS") or "public",
         sslmode=os.getenv("SSLMODE_DB_WTS") or "prefer",
+    )
+
+
+def load_email_settings() -> EmailSettings:
+    """Load SMTP credentials used for invoice-report emails."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    required = ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_APP_PASSWORD")
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise ValueError(f"Missing SMTP settings: {', '.join(missing)}")
+    try:
+        port = int(os.environ["SMTP_PORT"])
+    except ValueError:
+        raise ValueError("SMTP_PORT must be an integer") from None
+    if not 1 <= port <= 65535:
+        raise ValueError("SMTP_PORT must be between 1 and 65535")
+    return EmailSettings(
+        sender=os.environ["SMTP_USERNAME"].strip(),
+        password=os.environ["SMTP_APP_PASSWORD"],
+        host=os.environ["SMTP_HOST"].strip(),
+        port=port,
     )
 
 
