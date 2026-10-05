@@ -375,7 +375,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"Preu mitja: {effective_price} EUR/kWh\n\n"
         "RESUM\n"
         f"{chr(10).join(report.insights)}\n\n"
-        "PER QUE HA TINGUT AQUEST COST?\n"
+        "PER QUÈ HA TINGUT AQUEST COST?\n"
         f"{insights_text}\n"
         f"Cost mitjà diari: {daily_cost} EUR/dia\n"
         "\nDistribució del consum segons el preu:\n"
@@ -415,7 +415,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"<ul>{legend}</ul>"
         "<hr>"
         f"{daily_html}"
-        "<hr><h2>Per que ha tingut aquest cost?</h2>"
+        "<hr><h2>Per què ha tingut aquest cost?</h2>"
         f"<ul>{insights_html}</ul>"
         f"{comparison_html}{previous_invoice_html}{savings_html}{recommendation_html}"
         "</div></body></html>",

@@ -104,6 +104,8 @@ def test_hourly_consumption_section_is_removed(monkeypatch):
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     plain = message.get_body("plain").get_content()
     html = message.get_body("html").get_content()
+    assert "PER QUÈ HA TINGUT AQUEST COST?" in plain
+    assert "Per què ha tingut aquest cost?" in html
     assert "Quan has consumit?" not in html
     assert "<tr><td style=\"width:100px" not in html
     assert "Dies amb més consum" in plain
