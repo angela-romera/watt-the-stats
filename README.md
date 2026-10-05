@@ -38,6 +38,11 @@ uses `SERVER_WTS`, `DB_WTS_ELEC`, `USER_DB_WTS`, `PWD_DB_WTS`, and `PORT_DB_WTS`
 `SSLMODE_DB_WTS` defaults to `prefer`. Each entry in `USER_ENERGIAXXI_LIST` identifies
 an existing `login.username` whose client can be matched by CUPS.
 
+Invoice report emails use the `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, and
+`SMTP_APP_PASSWORD` variables. For Gmail, set `SMTP_APP_PASSWORD` to a Gmail
+app password (not the account's usual password). The recipient is read from
+`client.email_to`.
+
 Initialize a new database with [sql/postgresql_schema.sql](sql/postgresql_schema.sql).
 The script targets PostgreSQL's `public` schema. It is for a new database and
 does not migrate an existing SQL Server schema. The uploader manages neither
@@ -69,6 +74,23 @@ uv run python main.py --process-only
 `--process-only` skips browser downloads and uses existing CSVs.
 Both folders are configured in `config/settings.json`; reprocessing replaces the
 matching staging JSON files.
+
+To test the email connection without downloading, processing, or uploading data,
+send an empty report for the most recently inserted invoice of `client_id=1`:
+
+```powershell
+uv run python main.py --send-empty-report
+```
+
+This command requires the PostgreSQL settings, all four `SMTP_*` variables, and a
+non-empty `client.email_to` value for client 1.
+
+To send the current report version, containing the latest invoice's period,
+tariff, total consumption in kWh, and total cost in EUR, run:
+
+```powershell
+uv run python main.py --send-report
+```
 After a confirmed upload (including an existing duplicate), the matching staging
 JSON and source CSV are deleted after the database transaction completes. Failed or
 uncertain uploads retain staging JSON for inspection. A cleanup error is logged
