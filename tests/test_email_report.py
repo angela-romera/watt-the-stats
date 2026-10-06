@@ -2,8 +2,14 @@ from datetime import date, time
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.config import DatabaseSettings, EmailSettings
-from src.email_report import latest_invoice_report, send_invoice_report
+from src.email_report import (
+    MissingReportRecipientError,
+    latest_invoice_report,
+    send_invoice_report,
+)
 
 DATABASE = DatabaseSettings("host", "database", "user", "secret")
 EMAIL = EmailSettings("sender@example.com", "email-secret", "smtp.example.com", 465)
@@ -52,6 +58,26 @@ def test_report_can_target_a_specific_invoice_id(monkeypatch):
 
     assert report.invoice_id == 27
     assert cursor.execute.call_args_list[0].args[1] == (1, 27)
+
+
+def test_report_is_not_sent_when_email_to_is_missing(monkeypatch):
+    connect = MagicMock()
+    cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value = (
+        27,
+        "  ",
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        "2.0TD",
+    )
+    monkeypatch.setattr("src.email_report.psycopg.connect", connect)
+    smtp = MagicMock()
+    monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
+
+    with pytest.raises(MissingReportRecipientError, match="has no email_to address"):
+        send_invoice_report(DATABASE, EMAIL)
+
+    smtp.assert_not_called()
 
 
 def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch):

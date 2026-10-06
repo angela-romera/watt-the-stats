@@ -35,6 +35,10 @@ MEDIUM_PRICE_COLOR = "#F9A825"
 EXPENSIVE_PRICE_COLOR = "#E53935"
 
 
+class MissingReportRecipientError(ValueError):
+    """Raised when a billing report has no recipient address."""
+
+
 @dataclass(frozen=True)
 class ReportRecipient:
     invoice_id: int
@@ -106,7 +110,7 @@ def latest_invoice_recipient(database: DatabaseSettings, client_id: int = 1) -> 
         raise LookupError(f"No invoice found for client_id={client_id}")
     invoice_id, email_to = row
     if not isinstance(email_to, str) or not email_to.strip():
-        raise ValueError(f"Client {client_id} has no email_to address")
+        raise MissingReportRecipientError(f"Client {client_id} has no email_to address")
     return ReportRecipient(invoice_id=invoice_id, email_to=email_to.strip())
 
 
@@ -186,7 +190,7 @@ def latest_invoice_report(
         tariff,
     ) = row
     if not isinstance(email_to, str) or not email_to.strip():
-        raise ValueError(f"Client {client_id} has no email_to address")
+        raise MissingReportRecipientError(f"Client {client_id} has no email_to address")
     current_analysis = calculate_bill_analysis(current_details, initial_date, final_date)
     previous_period = _previous_period_summary(
         database,

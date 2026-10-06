@@ -5,7 +5,11 @@ import argparse
 from loguru import logger
 
 from src.config import load_database_settings, load_email_settings, load_settings
-from src.email_report import send_empty_invoice_report, send_invoice_report
+from src.email_report import (
+    MissingReportRecipientError,
+    send_empty_invoice_report,
+    send_invoice_report,
+)
 from src.process_data import transform_csv, write_staging
 from src.scraper import WebScraper
 
@@ -46,7 +50,13 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
     if args.send_report:
-        report = send_invoice_report(load_database_settings(), load_email_settings(), client_id=1)
+        try:
+            report = send_invoice_report(
+                load_database_settings(), load_email_settings(), client_id=1
+            )
+        except MissingReportRecipientError as error:
+            logger.warning("Skipping invoice report email: {}", error)
+            return
         logger.info(
             "Sent invoice report for invoice {} to {}: {} kWh, {} EUR",
             report.invoice_id,
