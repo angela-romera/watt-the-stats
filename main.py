@@ -1,6 +1,7 @@
 """Download consumption CSVs, process them, and insert invoice data into PostgreSQL."""
 
 import argparse
+from decimal import Decimal, ROUND_HALF_UP
 
 from loguru import logger
 
@@ -61,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
             "Sent invoice report for invoice {} to {}: {} kWh, {} EUR",
             report.invoice_id,
             report.email_to,
-            report.consumption_kwh,
+            report.consumption_kwh.quantize(Decimal("1"), rounding=ROUND_HALF_UP),
             report.cost_eur,
         )
         return

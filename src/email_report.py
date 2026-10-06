@@ -322,11 +322,9 @@ def _one_year_earlier(value: date) -> date:
 
 def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
     """Build the plain-text initial version of an invoice summary email."""
-    consumption = report.consumption_kwh.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    consumption = report.consumption_kwh.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     cost = report.cost_eur.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    daily_consumption = report.analysis.kwh_per_day.quantize(
-        Decimal("0.001"), rounding=ROUND_HALF_UP
-    )
+    daily_consumption = _whole_kwh(report.analysis.kwh_per_day)
     daily_cost = report.analysis.eur_per_day.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     effective_price = _money_per_kwh(report.analysis.average_price_eur_per_kwh)
     bands = (
@@ -348,7 +346,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         ),
     )
     distribution = "\n".join(
-        f"- {label}: {amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh "
+        f"- {label}: {_whole_kwh(amount)} kWh "
         f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
         for label, amount, _color in bands
     )
@@ -381,19 +379,19 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"{chr(10).join(report.insights)}\n\n"
         "PER QUÈ HA TINGUT AQUEST COST?\n"
         f"{insights_text}\n"
+        f"{previous_invoice_text}"
         f"Cost mitjà diari: {daily_cost} EUR/dia\n"
         "\nDistribució del consum segons el preu:\n"
         f"{distribution}\n"
         f"{daily_text}"
         f"{comparison_text}"
-        f"{previous_invoice_text}"
         f"{savings_text}{recommendation_text}"
     )
     legend = "".join(
         "<li>"
-        f'<span style="color: {color};">&#9679;</span> '
+        f'<span style="color: {color};font-size:20px;line-height:1;">&#9679;</span> '
         f"{escape(label)}: "
-        f"{amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh "
+        f"{_whole_kwh(amount)} kWh "
         f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
         "</li>"
         for label, amount, color in bands
@@ -403,7 +401,7 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         '<h1 style="font-size:25px;margin-bottom:4px;">Factura de la llum</h1>'
         f'<p style="font-size:18px;margin-top:0;">{report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}</p>'
         f'<p style="font-size:36px;font-weight:bold;margin:8px 0 0;">{cost} EUR</p>'
-        f"<p><strong>{consumption} kWh</strong> &nbsp;|&nbsp; {daily_cost} EUR/dia"
+        f"<p>{consumption} kWh &nbsp;|&nbsp; {daily_cost} EUR/dia"
         f" &nbsp;|&nbsp; {effective_price} EUR/kWh</p>"
         f'<div style="background:#f1f8e9;padding:14px;border-radius:6px;">{summary_html}</div>'
         "<h2>Resum de la factura</h2>"
@@ -416,12 +414,11 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         "<h3>Distribució del consum segons el preu</h3>"
         f'<img src="cid:{chart_cid}" alt="Gràfic de sectors del consum per preu" '
         'width="280" height="280">'
-        f"<ul>{legend}</ul>"
-        "<hr>"
+        f'<ul style="list-style:none;padding-left:0;margin-left:0;">{legend}</ul>'
         f"{daily_html}"
-        "<hr><h2>Per què ha tingut aquest cost?</h2>"
+        "<h2>Per què ha tingut aquest cost?</h2>"
         f"<ul>{insights_html}</ul>"
-        f"{comparison_html}{previous_invoice_html}{savings_html}{recommendation_html}"
+        f"{previous_invoice_html}{comparison_html}{savings_html}{recommendation_html}"
         "</div></body></html>",
         subtype="html",
     )
@@ -464,41 +461,48 @@ def _previous_invoice_content(report: InvoiceReport) -> tuple[str, str]:
         previous.initial_date,
         previous.final_date,
     )
-    current_price = _money_per_kwh(report.analysis.average_price_eur_per_kwh)
-    previous_price = _money_per_kwh(previous.analysis.average_price_eur_per_kwh)
     changes = report.comparison
+    consumption_sentence = _daily_comparison_sentence(
+        "Has consumit", current_kwh_day, previous_kwh_day, "kWh al dia",
+        changes.consumption_per_day_change_percent,
+    )
+    cost_sentence = _daily_comparison_sentence(
+        "Has pagat", current_eur_day, previous_eur_day, "EUR al dia",
+        changes.cost_per_day_change_percent,
+    )
     text = (
-        "\nComparativa amb la factura anterior:\n"
-        f"Factura actual ({report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}): "
-        f"{current_kwh_day} kWh/dia; {current_eur_day} EUR/dia\n"
-        f"Preu mitja: {current_price} EUR/kWh\n"
-        f"Factura anterior ({previous.initial_date:%d/%m/%Y} - {previous.final_date:%d/%m/%Y}): "
-        f"{previous_kwh_day} kWh/dia; {previous_eur_day} EUR/dia\n"
-        f"Preu mitja: {previous_price} EUR/kWh\n"
-        f"Canvi diari: consum {_change_label(changes.consumption_per_day_change_percent)}, "
-        f"cost {_change_label(changes.cost_per_day_change_percent)}, "
-        f"preu {_change_label(changes.average_price_change_percent)}\n"
-        f"Canvi estimat del cost diari: consum {_signed_eur(changes.consumption_effect_eur_per_day)} EUR/dia; "
-        f"preu {_signed_eur(changes.price_effect_eur_per_day)} EUR/dia\n"
+        "\nComparació amb la factura anterior:\n"
+        f"{consumption_sentence}\n"
+        f"{cost_sentence}\n"
     )
     html = (
-        "<h3>Comparativa amb la factura anterior</h3><ul>"
-        f"<li><strong>Factura actual</strong> ({report.initial_date:%d/%m/%Y} - "
-        f"{report.final_date:%d/%m/%Y}): {current_kwh_day} kWh/dia; "
-        f"{current_eur_day} EUR/dia</li>"
-        f"<li>Preu mitja actual: {current_price} EUR/kWh "
-        f"({_change_label(changes.average_price_change_percent)} respecte de l'anterior)</li>"
-        f"<li><strong>Factura anterior</strong> ({previous.initial_date:%d/%m/%Y} - "
-        f"{previous.final_date:%d/%m/%Y}): {previous_kwh_day} kWh/dia; "
-        f"{previous_eur_day} EUR/dia</li>"
-        f"<li>Canvi diari: consum {_change_label(changes.consumption_per_day_change_percent)}; "
-        f"cost {_change_label(changes.cost_per_day_change_percent)}</li>"
-        f"<li>Canvi del cost diari: consum {_signed_eur(changes.consumption_effect_eur_per_day)} EUR/dia; "
-        f"preu {_signed_eur(changes.price_effect_eur_per_day)} EUR/dia. "
-        "Repartiment simètric de les mitjanes diàries.</li>"
+        "<h3>Comparació amb la factura anterior</h3>"
+        f"<ul><li>{consumption_sentence}</li>"
+        f"<li>{cost_sentence}</li>"
         "</ul>"
     )
     return text, html
+
+
+def _daily_comparison_sentence(
+    subject: str,
+    current: str,
+    previous: str,
+    unit: str,
+    change: Decimal | None,
+) -> str:
+    if change is None:
+        return "No hi ha prou dades per comparar les dues factures."
+    if change > 0:
+        comparison = "més cada dia"
+    elif change < 0:
+        comparison = "menys cada dia"
+    else:
+        comparison = "el mateix cada dia"
+    return (
+        f"{subject} {comparison}: {current} {unit}; "
+        f"a la factura anterior eren {previous} {unit}."
+    )
 
 
 def _money_per_kwh(value: Decimal | None) -> str:
@@ -516,6 +520,20 @@ def _change_label(value: Decimal | None) -> str:
     return f"{arrow} {abs(value):.1f}%"
 
 
+def _year_change_sentence(subject: str, value: Decimal | None) -> str:
+    if value is None:
+        return f"{subject}: el canvi respecte del mateix període de l'any anterior no es pot calcular."
+    if value > 0:
+        verb = "ha augmentat"
+    elif value < 0:
+        verb = "ha disminuït"
+    else:
+        return f"{subject} s'ha mantingut igual que en el mateix període de l'any anterior."
+    return (
+        f"{subject} {verb} un {abs(value):.0f}% respecte del mateix període de l'any anterior."
+    )
+
+
 def _signed_eur(value: Decimal | None) -> str:
     return "N/D" if value is None else f"{value:+.2f}"
 
@@ -527,8 +545,7 @@ def _decomposition_html(comparison: BillComparison) -> str:
         return ""
     return (
         "<li>Canvi estimat del cost diari atribuït al consum: "
-        f"{consumption:+.2f} EUR/dia; al preu: {price:+.2f} EUR/dia. "
-        "Repartiment simètric basat en mitjanes diàries.</li>"
+        f"{consumption:+.2f} EUR/dia; al preu: {price:+.2f} EUR/dia.</li>"
     )
 
 
@@ -549,7 +566,7 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
             f'<tr><td style="width:100px;white-space:nowrap;">{item.hour:02d}:00–'
             f'{(item.hour + 1) % 24:02d}:00</td><td style="width:100%;">'
             f'<div style="height:16px;background:{color};width:{width}%;min-width:2px;">&nbsp;</div>'
-            f'</td><td style="white-space:nowrap;padding-left:8px;">{item.average_kwh_per_day:.3f} kWh/dia</td></tr>'
+            f'</td><td style="white-space:nowrap;padding-left:8px;">{_whole_kwh(item.average_kwh_per_day)} kWh/dia</td></tr>'
         )
     observations = []
     if analysis.highest_hour is not None:
@@ -562,7 +579,7 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
         hours = ", ".join(f"{item.hour:02d}:00" for item in analysis.expensive_hours[:3])
         observations.append(f"Consum elevat en hores cares: {hours}.")
     text = "\nConsum mitjà per hora i dia (kWh/dia):\n" + "\n".join(
-        f"{item.hour:02d}:00–{(item.hour + 1) % 24:02d}:00: {item.average_kwh_per_day:.3f} kWh/dia"
+        f"{item.hour:02d}:00–{(item.hour + 1) % 24:02d}:00: {_whole_kwh(item.average_kwh_per_day)} kWh/dia"
         for item in values
     )
     text += "\n" + "\n".join(observations) + "\n"
@@ -580,17 +597,38 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
 
 def _daily_content(analysis: BillAnalysis) -> tuple[str, str]:
     top_days = analysis.top_days
-    text = "\nDies amb més consum:\n" + "\n".join(
-        f"{index}. {item.day:%d/%m/%Y} — {item.kwh:.3f} kWh"
-        for index, item in enumerate(top_days, start=1)
+    text = "\nTop 3 dies per consum:\n" + "\n".join(
+        f"{item.day:%d/%m/%Y} - {item.kwh:.0f} kWh"
+        for item in top_days
     )
-    text += f"\nMitjana: {analysis.kwh_per_day:.3f} kWh/dia.\n"
+    text += f"\nMitjana: {_whole_kwh(analysis.kwh_per_day)} kWh/dia.\n"
+    podium_items = ((1, "#c0c0c0", 66), (0, "#f9a825", 88), (2, "#b87333", 48))
+    podium_cells = []
+    for index, color, height in podium_items:
+        if index >= len(top_days):
+            podium_cells.append('<td style="width:33%;"></td>')
+            continue
+        item = top_days[index]
+        podium_cells.append(
+            '<td style="width:33%;text-align:center;vertical-align:bottom;padding:8px 4px;">'
+            f'<div style="font-size:14px;">{item.day:%d/%m/%Y}</div>'
+            f'<div style="font-size:16px;font-weight:bold;margin:4px 0;">{item.kwh:.0f} kWh</div>'
+            f'<div style="height:{height}px;background:{color};color:#263238;'
+            'font-size:20px;font-weight:bold;padding-top:8px;box-sizing:border-box;">'
+            f'{index + 1}</div></td>'
+        )
     html = (
-        "<h3>Dies amb més consum</h3><ol>"
-        + "".join(f"<li>{item.day:%d/%m/%Y}: {item.kwh:.3f} kWh</li>" for item in top_days)
-        + f"</ol><p>Mitjana del període: {analysis.kwh_per_day:.3f} kWh/dia.</p>"
+        "<h3>Top 3 dies per consum</h3>"
+        '<table role="presentation" style="width:100%;border-collapse:collapse;">'
+        f"<tr>{''.join(podium_cells)}</tr></table>"
+        f"<p>Mitjana del per\u00edode: {_whole_kwh(analysis.kwh_per_day)} kWh/dia.</p>"
     )
     return text, html
+
+
+def _whole_kwh(value: Decimal) -> int:
+    """Round consumption for display as a whole number of kWh."""
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _savings_content(savings: SavingsEstimate | None) -> tuple[str, str]:
@@ -635,7 +673,7 @@ def _daily_averages(
     """Return average kWh/day and EUR/day for an inclusive date range."""
     days = (final_date - initial_date).days + 1
     return (
-        (consumption_kwh / days).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+        (consumption_kwh / days).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
         (cost_eur / days).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
     )
 
@@ -679,47 +717,40 @@ def _previous_period_content(
         ("Preu alt — any anterior", bands[2][1], "#EF9A9A"),
     )
     comparison_text = "\n".join(
-        f"- {label}: {amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
+        f"- {label}: {_whole_kwh(amount)} kWh"
         for label, amount, _color in comparison_bands
     )
     comparison_legend = "".join(
         "<li>"
-        f'<span style="color: {color};">&#9632;</span> {label}: '
-        f"{amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
+        f'<span style="color: {color};font-size:20px;line-height:1;">&#9679;</span> {label}: '
+        f"{_whole_kwh(amount)} kWh"
         "</li>"
         for label, amount, color in comparison_bands
     )
     comparison_chart_cid = "comparativa-consum-per-preu"
     year_comparison = calculate_bill_comparison(report.analysis, previous.analysis)
+    year_avg_price_sentence = _year_change_sentence(
+        "El preu mitjà de l'electricitat", year_comparison.average_price_change_percent
+    )
     text = (
         "\nComparativa amb el mateix període de l'any anterior:\n"
-        f"Consum: {report.analysis.total_kwh:.3f} kWh; any anterior: "
-        f"{previous.analysis.total_kwh:.3f} kWh; canvi {_change_label(calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}\n"
-        f"Consum diari: {report.analysis.kwh_per_day:.3f} kWh/dia; any anterior: "
-        f"{previous.analysis.kwh_per_day:.3f} kWh/dia; canvi {_change_label(year_comparison.consumption_per_day_change_percent)}\n"
-        f"Cost: {report.analysis.total_cost_eur:.2f} EUR; any anterior: "
-        f"{previous.analysis.total_cost_eur:.2f} EUR; canvi {_change_label(calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}\n"
-        f"Preu mitjà: {_money_per_kwh(report.analysis.average_price_eur_per_kwh)} EUR/kWh; any anterior: "
-        f"{_money_per_kwh(previous.analysis.average_price_eur_per_kwh)} EUR/kWh; canvi {_change_label(year_comparison.average_price_change_percent)}\n"
+        f"{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}\n"
+        f"{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}\n"
+        f"{year_avg_price_sentence}\n"
         "Comparativa del consum per franja de preu:\n"
         f"{comparison_text}\n"
     )
     html = (
         "<h2>Comparativa amb el mateix període de l'any anterior</h2>"
         "<ul>"
-        f"<li>Consum: {report.analysis.total_kwh:.3f} kWh; any anterior: "
-        f"{previous.analysis.total_kwh:.3f} kWh; {_change_label(calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
-        f"<li>Consum diari: {report.analysis.kwh_per_day:.3f} kWh/dia; any anterior: "
-        f"{previous.analysis.kwh_per_day:.3f} kWh/dia; {_change_label(year_comparison.consumption_per_day_change_percent)}</li>"
-        f"<li>Cost: {report.analysis.total_cost_eur:.2f} EUR; any anterior: "
-        f"{previous.analysis.total_cost_eur:.2f} EUR; {_change_label(calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
-        f"<li>Preu mitjà: {_money_per_kwh(report.analysis.average_price_eur_per_kwh)} EUR/kWh; any anterior: "
-        f"{_money_per_kwh(previous.analysis.average_price_eur_per_kwh)} EUR/kWh; {_change_label(year_comparison.average_price_change_percent)}</li>"
+        f"<li>{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
+        f"<li>{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
+        f"<li>{year_avg_price_sentence}</li>"
         "</ul><h3>Consum per franja de preu</h3>"
         f'<img src="cid:{comparison_chart_cid}" '
         'alt="Gràfic de columnes del consum per franja de preu i període" '
         'width="360" height="280">'
-        f"<ul>{comparison_legend}</ul>"
+        f'<ul style="list-style:none;padding-left:0;margin-left:0;">{comparison_legend}</ul>'
     )
     return text, html, comparison_bands
 
