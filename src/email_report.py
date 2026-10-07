@@ -402,7 +402,7 @@ def _report_message(
         f" &nbsp;|&nbsp; {effective_price} EUR/kWh</p>"
         f'<div style="background:#f1f8e9;padding:14px;border-radius:6px;">{summary_html}</div>'
         "<h2>Resum de la factura</h2>"
-        f"<p><strong>Període:</strong> {report.initial_date:%d/%m/%Y} - "
+        f'<p style="margin-bottom:16px;"><strong>Període:</strong> {report.initial_date:%d/%m/%Y} - '
         f"{report.final_date:%d/%m/%Y}<br>"
         f"<strong>Tarifa:</strong> {escape(report.tariff)}<br>"
         f"<strong>Consum total:</strong> {consumption} kWh<br>"
@@ -679,13 +679,6 @@ def _previous_period_content(
         f"- {label}: {_whole_kwh(amount)} kWh"
         for label, amount, _color in comparison_bands
     )
-    comparison_legend = "".join(
-        "<li>"
-        f'<span style="color: {color};font-size:20px;line-height:1;">&#9679;</span> {label}: '
-        f"{_whole_kwh(amount)} kWh"
-        "</li>"
-        for label, amount, color in comparison_bands
-    )
     year_comparison = calculate_bill_comparison(report.analysis, previous.analysis)
     year_avg_price_sentence = _year_change_sentence(
         "El preu mitjà de l'electricitat", year_comparison.average_price_change_percent
@@ -700,12 +693,11 @@ def _previous_period_content(
     )
     html = (
         "<h2>Comparativa amb el mateix període de l'any anterior</h2>"
-        "<ul>"
+        '<ul style="margin-bottom:16px;">'
         f"<li>{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
         f"<li>{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
         f"<li>{year_avg_price_sentence}</li>"
         "</ul>"
-        f'<ul style="list-style:none;padding-left:0;margin-left:0;">{comparison_legend}</ul>'
     )
     return text, html, comparison_bands
 
@@ -721,7 +713,7 @@ def _chart_html(url: str, alt: str) -> str:
     """Use table alignment for email clients and scale down on narrow screens."""
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
-        '<tr><td align="center" style="text-align:center;padding:12px 0;">'
+        '<tr><td align="center" style="text-align:center;padding:12px 0 0;">'
         f'<img src="{escape(url, quote=True)}" alt="{escape(alt, quote=True)}" '
         'width="648" style="display:block;width:100%;max-width:648px;height:auto;'
         'margin:0 auto;border:0;"></td></tr></table>'

@@ -25,6 +25,8 @@ PODIUM_KWH_FORMATTER = (
 PODIUM_KWH_FORMATTER_PLACEHOLDER = "__PODIUM_KWH_FORMATTER__"
 WHOLE_KWH_FORMATTER = "function(value){return Math.round(value).toString();}"
 WHOLE_KWH_FORMATTER_PLACEHOLDER = "__WHOLE_KWH_FORMATTER__"
+COMPARISON_KWH_FORMATTER = "function(value){return Math.round(value)+' kWh';}"
+COMPARISON_KWH_FORMATTER_PLACEHOLDER = "__COMPARISON_KWH_FORMATTER__"
 INK = "#223247"
 MUTED = "#68788C"
 GRID = "#E5EBF2"
@@ -58,6 +60,9 @@ def _url(config: dict, *, version: str = "4", height: int = 420) -> str:
     chart = chart.replace(json.dumps(PIE_PERCENT_FORMATTER_PLACEHOLDER), PIE_PERCENT_FORMATTER)
     chart = chart.replace(json.dumps(PODIUM_KWH_FORMATTER_PLACEHOLDER), PODIUM_KWH_FORMATTER)
     chart = chart.replace(json.dumps(WHOLE_KWH_FORMATTER_PLACEHOLDER), WHOLE_KWH_FORMATTER)
+    chart = chart.replace(
+        json.dumps(COMPARISON_KWH_FORMATTER_PLACEHOLDER), COMPARISON_KWH_FORMATTER
+    )
     query = urlencode(
         {
             "version": version,
@@ -191,7 +196,7 @@ def daily_podium_url(days: Sequence[DailyUsage]) -> str:
     return _url(config, height=540)
 
 def price_columns_url(current: PriceDistribution, previous: PriceDistribution | None = None) -> str:
-    """Show each price band on a shared zero-based scale."""
+    """Compare price bands, using the top-days visual style when history exists."""
     values = _values(current)
     prior = _values(previous) if previous is not None else None
     options = _options()
@@ -201,45 +206,77 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
         "align": "end",
         "offset": 3,
         "color": INK,
-        "font": {"family": "Arial", "size": 11, "weight": "bold"},
-        "formatter": WHOLE_KWH_FORMATTER_PLACEHOLDER,
+        "font": {"family": "Arial", "size": 15 if prior is not None else 11, "weight": "bold"},
+        "formatter": (
+            COMPARISON_KWH_FORMATTER_PLACEHOLDER
+            if prior is not None
+            else WHOLE_KWH_FORMATTER_PLACEHOLDER
+        ),
     }
     options["scales"] = {
         "x": {
             "grid": {"display": False},
             "border": {"color": GRID},
-            "ticks": {"color": INK, "font": {"family": "Arial", "size": 13}},
+            "ticks": {
+                "color": INK,
+                "font": {
+                    "family": "Arial",
+                    "size": 15 if prior is not None else 13,
+                    "weight": "bold" if prior is not None else "normal",
+                },
+            },
         },
         "y": {
             "beginAtZero": True,
-            "suggestedMax": max(values + (prior or [0])) * 1.2 or 1,
-            "ticks": {"precision": 0, "color": MUTED, "maxTicksLimit": 5},
-            "grid": {"color": GRID},
+            "ticks": {
+                "precision": 0,
+                "display": prior is None,
+                "color": MUTED,
+                "maxTicksLimit": 5,
+            },
+            "grid": {"display": prior is None, "color": GRID},
             "border": {"display": False},
-            "title": {"display": True, "text": "kWh", "color": MUTED},
+            "title": {"display": prior is None, "text": "kWh", "color": MUTED},
         },
     }
+    largest_value = max(values + (prior or [0]))
+    if prior is not None:
+        # Keep every report's paired bars on a zero-based scale sized to its own data.
+        options["scales"]["y"]["max"] = largest_value * 1.18 if largest_value else 1
+    else:
+        options["scales"]["y"]["suggestedMax"] = largest_value * 1.2 if largest_value else 1
+    chart_labels = list(BAND_LABELS)
     datasets = [
         {
-            "label": "Període actual",
+            "label": "Per??ode actual",
             "data": values,
             "backgroundColor": list(BAND_COLORS),
-            "borderRadius": 9,
+            "borderRadius": 13,
             "barPercentage": 0.82,
             "categoryPercentage": 0.72,
         }
     ]
     if prior is not None:
-        datasets.append(
+        chart_labels = ["Actual", "Any anterior"] * len(BAND_LABELS)
+        comparison_values = [value for pair in zip(values, prior, strict=True) for value in pair]
+        comparison_colors = [
+            color
+            for current_color, previous_color in zip(
+                BAND_COLORS, PREVIOUS_BAND_COLORS, strict=True
+            )
+            for color in (current_color, previous_color)
+        ]
+        datasets = [
             {
-                "label": "Mateix període, any anterior",
-                "data": prior,
-                "backgroundColor": list(PREVIOUS_BAND_COLORS),
-                "borderRadius": 9,
-                "barPercentage": 0.82,
-                "categoryPercentage": 0.72,
+                "label": "Consum per franja",
+                "data": comparison_values,
+                "backgroundColor": comparison_colors,
+                "borderRadius": 13,
+                "barPercentage": 0.96,
+                "categoryPercentage": 0.94,
             }
-        )
+        ]
     return _url(
-        {"type": "bar", "data": {"labels": BAND_LABELS, "datasets": datasets}, "options": options}
+        {"type": "bar", "data": {"labels": chart_labels, "datasets": datasets}, "options": options},
+        height=540 if prior is not None else 420,
     )

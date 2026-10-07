@@ -204,53 +204,57 @@ def price_columns_png(
     current: PriceDistribution,
     previous: PriceDistribution | None = None,
 ) -> bytes:
-    """Grouped columns on one zero-based scale; use current-only columns without history."""
+    """Compare price bands, labeling each bar by period when history exists."""
     values = _values(current)
     prior = _values(previous) if previous is not None else None
     with mpl.rc_context(STYLE):
         figure = _figure()
         axis = _column_axes(figure, max(values + (prior or [0])))
-        axis.text(0, 1.04, "kWh", transform=axis.transAxes, fontsize=9, color=MUTED)
-        positions = (0, 1, 2)
-        width = 0.28 if prior is not None else 0.42
-        current_bars = axis.bar(
-            [position - (0.17 if prior is not None else 0) for position in positions],
-            values,
-            width=width,
-            color=BAND_COLORS,
-            zorder=3,
-        )
-        axis.bar_label(
-            current_bars,
-            labels=[format_kwh(value) for value in values],
-            padding=6,
-            fontsize=10,
-            weight="bold",
-            color=INK,
-        )
         if prior is not None:
-            prior_bars = axis.bar(
-                [position + 0.17 for position in positions],
-                prior,
-                width=width,
-                color=PREVIOUS_BAND_COLORS,
-                zorder=3,
+            axis.grid(False)
+            axis.set_yticks([])
+            axis.tick_params(axis="y", labelleft=False)
+            positions = tuple(range(6))
+            axis.set_xlim(-0.65, 5.65)
+            axis.set_xticks(positions, ("Actual", "Any anterior") * 3)
+            combined_values = [value for pair in zip(values, prior, strict=True) for value in pair]
+            combined_colors = [
+                color
+                for current_color, previous_color in zip(
+                    BAND_COLORS, PREVIOUS_BAND_COLORS, strict=True
+                )
+                for color in (current_color, previous_color)
+            ]
+            bars = axis.bar(
+                positions, combined_values, width=0.72, color=combined_colors, zorder=3
             )
             axis.bar_label(
-                prior_bars,
-                labels=[format_kwh(value) for value in prior],
+                bars,
+                labels=[f"{format_kwh(value)} kWh" for value in combined_values],
                 padding=6,
                 fontsize=10,
+                weight="bold",
+                color=INK,
+            )
+        else:
+            axis.text(0, 1.04, "kWh", transform=axis.transAxes, fontsize=9, color=MUTED)
+            bars = axis.bar((0, 1, 2), values, width=0.42, color=BAND_COLORS, zorder=3)
+            axis.bar_label(
+                bars,
+                labels=[format_kwh(value) for value in values],
+                padding=6,
+                fontsize=10,
+                weight="bold",
+                color=INK,
+            )
+            low = str(CHEAP_PRICE_THRESHOLD_EUR_PER_KWH).replace(".", ",")
+            high = str(EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH).replace(".", ",")
+            figure.text(
+                0.5,
+                0.095,
+                f"Baix <= {low}  |  Mitja > {low} i < {high}  |  Alt >= {high} EUR/kWh",
+                ha="center",
+                fontsize=8,
                 color=MUTED,
             )
-        low = str(CHEAP_PRICE_THRESHOLD_EUR_PER_KWH).replace(".", ",")
-        high = str(EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH).replace(".", ",")
-        figure.text(
-            0.5,
-            0.095,
-            f"Baix ≤ {low}  ·  Mitjà > {low} i < {high}  ·  Alt ≥ {high} EUR/kWh",
-            ha="center",
-            fontsize=8,
-            color=MUTED,
-        )
         return _png(figure)
