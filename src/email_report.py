@@ -1,20 +1,20 @@
 """Send invoice-report emails without changing invoice data."""
 
 import smtplib
-import struct
-import zlib
 from calendar import monthrange
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from email.message import EmailMessage
 from html import escape
-from math import atan2, pi
+from secrets import token_urlsafe
 
 import psycopg
 from psycopg import sql
 
 from src.config import DatabaseSettings, EmailSettings
+from src.quickchart_charts import daily_podium_url, price_columns_url, price_pie_url
 from src.report_calculations import (
     BillAnalysis,
     BillComparison,
@@ -27,12 +27,22 @@ from src.report_calculations import (
     generate_diagnostics,
     generate_recommendations,
 )
+from src.report_charts import (
+    BAND_COLORS,
+    PREVIOUS_BAND_COLORS,
+    daily_podium_png,
+    format_kwh,
+    price_columns_png,
+    price_pie_png,
+)
 
 CHEAP_PRICE_THRESHOLD_EUR_PER_KWH = Decimal("0.15")
 EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH = Decimal("0.25")
-CHEAP_PRICE_COLOR = "#43A047"
-MEDIUM_PRICE_COLOR = "#F9A825"
-EXPENSIVE_PRICE_COLOR = "#E53935"
+CHEAP_PRICE_COLOR, MEDIUM_PRICE_COLOR, EXPENSIVE_PRICE_COLOR = BAND_COLORS
+
+
+class MissingReportRecipientError(ValueError):
+    """Raised when a billing report has no recipient address."""
 
 
 @dataclass(frozen=True)
@@ -106,7 +116,7 @@ def latest_invoice_recipient(database: DatabaseSettings, client_id: int = 1) -> 
         raise LookupError(f"No invoice found for client_id={client_id}")
     invoice_id, email_to = row
     if not isinstance(email_to, str) or not email_to.strip():
-        raise ValueError(f"Client {client_id} has no email_to address")
+        raise MissingReportRecipientError(f"Client {client_id} has no email_to address")
     return ReportRecipient(invoice_id=invoice_id, email_to=email_to.strip())
 
 
@@ -186,7 +196,7 @@ def latest_invoice_report(
         tariff,
     ) = row
     if not isinstance(email_to, str) or not email_to.strip():
-        raise ValueError(f"Client {client_id} has no email_to address")
+        raise MissingReportRecipientError(f"Client {client_id} has no email_to address")
     current_analysis = calculate_bill_analysis(current_details, initial_date, final_date)
     previous_period = _previous_period_summary(
         database,
@@ -316,13 +326,13 @@ def _one_year_earlier(value: date) -> date:
     return date(year, value.month, min(value.day, monthrange(year, value.month)[1]))
 
 
-def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
-    """Build the plain-text initial version of an invoice summary email."""
-    consumption = report.consumption_kwh.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+def _report_message(
+    report: InvoiceReport, sender: str, chart_urls: Mapping[str, str]
+) -> EmailMessage:
+    """Build text and HTML alternatives with linked charts and no MIME image parts."""
+    consumption = report.consumption_kwh.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     cost = report.cost_eur.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    daily_consumption = report.analysis.kwh_per_day.quantize(
-        Decimal("0.001"), rounding=ROUND_HALF_UP
-    )
+    daily_consumption = _whole_kwh(report.analysis.kwh_per_day)
     daily_cost = report.analysis.eur_per_day.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     effective_price = _money_per_kwh(report.analysis.average_price_eur_per_kwh)
     bands = (
@@ -344,20 +354,18 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         ),
     )
     distribution = "\n".join(
-        f"- {label}: {amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh "
+        f"- {label}: {_whole_kwh(amount)} kWh "
         f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
         for label, amount, _color in bands
     )
-    comparison_text, comparison_html, comparison_bands = _previous_period_content(report, bands)
+    comparison_text, comparison_html, _comparison_bands = _previous_period_content(report, bands)
     previous_invoice_text, previous_invoice_html = _previous_invoice_content(report)
-    daily_text, daily_html = _daily_content(report.analysis)
+    daily_text = _daily_content(report.analysis)
     savings_text, savings_html = _savings_content(report.savings)
     recommendation_text, recommendation_html = _recommendation_content(report.recommendations)
     insights_text = "\n".join(f"- {item}" for item in report.diagnostics)
     insights_html = "".join(f"<li>{escape(item)}</li>" for item in report.diagnostics)
     summary_html = "<br>".join(escape(item) for item in report.insights)
-    chart_cid = "consum-per-preu"
-    comparison_chart_cid = "comparativa-consum-per-preu"
     message = EmailMessage()
     message["From"] = sender
     message["To"] = report.email_to
@@ -369,77 +377,47 @@ def _report_message(report: InvoiceReport, sender: str) -> EmailMessage:
         f"Període: {report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}\n"
         f"Tarifa: {report.tariff}\n"
         f"Consum total: {consumption} kWh\n"
+        f"Consum mitj\u00e0 diari: {daily_consumption} kWh/dia\n"
         f"Cost total: {cost} EUR\n"
-        f"Consum mitja diaria: {daily_consumption} kWh/dia\n"
         f"Cost mitja diaria: {daily_cost} EUR/dia\n"
         f"Preu mitja: {effective_price} EUR/kWh\n\n"
         "RESUM\n"
         f"{chr(10).join(report.insights)}\n\n"
         "PER QUÈ HA TINGUT AQUEST COST?\n"
         f"{insights_text}\n"
+        f"{previous_invoice_text}"
         f"Cost mitjà diari: {daily_cost} EUR/dia\n"
         "\nDistribució del consum segons el preu:\n"
         f"{distribution}\n"
         f"{daily_text}"
         f"{comparison_text}"
-        f"{previous_invoice_text}"
         f"{savings_text}{recommendation_text}"
-    )
-    legend = "".join(
-        "<li>"
-        f'<span style="color: {color};">&#9679;</span> '
-        f"{escape(label)}: "
-        f"{amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh "
-        f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
-        "</li>"
-        for label, amount, color in bands
     )
     message.add_alternative(
         '<html><body><div style="font-family:Arial,sans-serif;color:#263238;font-size:16px;line-height:1.5;max-width:680px;margin:auto;">'
         '<h1 style="font-size:25px;margin-bottom:4px;">Factura de la llum</h1>'
         f'<p style="font-size:18px;margin-top:0;">{report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}</p>'
         f'<p style="font-size:36px;font-weight:bold;margin:8px 0 0;">{cost} EUR</p>'
-        f"<p><strong>{consumption} kWh</strong> &nbsp;|&nbsp; {daily_cost} EUR/dia"
+        f"<p>{consumption} kWh &nbsp;|&nbsp; {daily_cost} EUR/dia"
         f" &nbsp;|&nbsp; {effective_price} EUR/kWh</p>"
         f'<div style="background:#f1f8e9;padding:14px;border-radius:6px;">{summary_html}</div>'
         "<h2>Resum de la factura</h2>"
-        f"<p><strong>Període:</strong> {report.initial_date:%d/%m/%Y} - "
+        f'<p style="margin-bottom:16px;"><strong>Període:</strong> {report.initial_date:%d/%m/%Y} - '
         f"{report.final_date:%d/%m/%Y}<br>"
         f"<strong>Tarifa:</strong> {escape(report.tariff)}<br>"
         f"<strong>Consum total:</strong> {consumption} kWh<br>"
+        f"<strong>Consum mitj\u00e0 diari:</strong> {daily_consumption} kWh/dia<br>"
         f"<strong>Cost total:</strong> {cost} EUR<br>"
         f"<strong>Cost mitjà diari:</strong> {daily_cost} EUR/dia</p>"
-        "<h3>Distribució del consum segons el preu</h3>"
-        f'<img src="cid:{chart_cid}" alt="Gràfic de sectors del consum per preu" '
-        'width="280" height="280">'
-        f"<ul>{legend}</ul>"
-        "<hr>"
-        f"{daily_html}"
-        "<hr><h2>Per què ha tingut aquest cost?</h2>"
+        f'{_side_by_side_charts_html(chart_urls["pie"], chart_urls["podium"])}'
+        "<h2>Per què ha tingut aquest cost?</h2>"
         f"<ul>{insights_html}</ul>"
-        f"{comparison_html}{previous_invoice_html}{savings_html}{recommendation_html}"
+        f"{previous_invoice_html}{comparison_html}"
+        f'{_chart_html(chart_urls["columns"], "Consum per franja de preu en kWh")}'
+        f"{savings_html}{recommendation_html}"
         "</div></body></html>",
         subtype="html",
     )
-    message.get_payload()[-1].add_related(
-        _pie_chart_png([(amount, color) for _label, amount, color in bands]),
-        maintype="image",
-        subtype="png",
-        cid=f"<{chart_cid}>",
-        filename="distribucio-consum-per-preu.png",
-        disposition="inline",
-    )
-    if comparison_bands is not None:
-        message.get_payload()[-1].add_related(
-            _price_band_comparison_png(
-                [(amount, color) for _label, amount, color in comparison_bands]
-            ),
-            maintype="image",
-            subtype="png",
-            cid=f"<{comparison_chart_cid}>",
-            filename="comparativa-consum-per-preu.png",
-            disposition="inline",
-        )
     return message
 
 
@@ -460,41 +438,52 @@ def _previous_invoice_content(report: InvoiceReport) -> tuple[str, str]:
         previous.initial_date,
         previous.final_date,
     )
-    current_price = _money_per_kwh(report.analysis.average_price_eur_per_kwh)
-    previous_price = _money_per_kwh(previous.analysis.average_price_eur_per_kwh)
     changes = report.comparison
+    consumption_sentence = _daily_comparison_sentence(
+        "Has consumit", current_kwh_day, previous_kwh_day, "kWh al dia",
+        changes.consumption_per_day_change_percent,
+    )
+    cost_sentence = _daily_comparison_sentence(
+        "Has pagat", current_eur_day, previous_eur_day, "EUR al dia",
+        changes.cost_per_day_change_percent,
+    )
     text = (
-        "\nComparativa amb la factura anterior:\n"
+        "\nComparació amb la factura anterior:\n"
         f"Factura actual ({report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}): "
-        f"{current_kwh_day} kWh/dia; {current_eur_day} EUR/dia\n"
-        f"Preu mitja: {current_price} EUR/kWh\n"
+        f"{current_kwh_day} kWh/dia\n"
         f"Factura anterior ({previous.initial_date:%d/%m/%Y} - {previous.final_date:%d/%m/%Y}): "
-        f"{previous_kwh_day} kWh/dia; {previous_eur_day} EUR/dia\n"
-        f"Preu mitja: {previous_price} EUR/kWh\n"
-        f"Canvi diari: consum {_change_label(changes.consumption_per_day_change_percent)}, "
-        f"cost {_change_label(changes.cost_per_day_change_percent)}, "
-        f"preu {_change_label(changes.average_price_change_percent)}\n"
-        f"Canvi estimat del cost diari: consum {_signed_eur(changes.consumption_effect_eur_per_day)} EUR/dia; "
-        f"preu {_signed_eur(changes.price_effect_eur_per_day)} EUR/dia\n"
+        f"{previous_kwh_day} kWh/dia\n"
+        f"{consumption_sentence}\n"
+        f"{cost_sentence}\n"
     )
     html = (
-        "<h3>Comparativa amb la factura anterior</h3><ul>"
-        f"<li><strong>Factura actual</strong> ({report.initial_date:%d/%m/%Y} - "
-        f"{report.final_date:%d/%m/%Y}): {current_kwh_day} kWh/dia; "
-        f"{current_eur_day} EUR/dia</li>"
-        f"<li>Preu mitja actual: {current_price} EUR/kWh "
-        f"({_change_label(changes.average_price_change_percent)} respecte de l'anterior)</li>"
-        f"<li><strong>Factura anterior</strong> ({previous.initial_date:%d/%m/%Y} - "
-        f"{previous.final_date:%d/%m/%Y}): {previous_kwh_day} kWh/dia; "
-        f"{previous_eur_day} EUR/dia</li>"
-        f"<li>Canvi diari: consum {_change_label(changes.consumption_per_day_change_percent)}; "
-        f"cost {_change_label(changes.cost_per_day_change_percent)}</li>"
-        f"<li>Canvi del cost diari: consum {_signed_eur(changes.consumption_effect_eur_per_day)} EUR/dia; "
-        f"preu {_signed_eur(changes.price_effect_eur_per_day)} EUR/dia. "
-        "Repartiment simètric de les mitjanes diàries.</li>"
+        "<h3>Comparació amb la factura anterior</h3>"
+        f"<ul><li>{consumption_sentence}</li>"
+        f"<li>{cost_sentence}</li>"
         "</ul>"
     )
     return text, html
+
+
+def _daily_comparison_sentence(
+    subject: str,
+    current: str,
+    previous: str,
+    unit: str,
+    change: Decimal | None,
+) -> str:
+    if change is None:
+        return "No hi ha prou dades per comparar les dues factures."
+    if change > 0:
+        comparison = "més cada dia"
+    elif change < 0:
+        comparison = "menys cada dia"
+    else:
+        comparison = "el mateix cada dia"
+    return (
+        f"{subject} {comparison}: {current} {unit}; "
+        f"a la factura anterior eren {previous} {unit}."
+    )
 
 
 def _money_per_kwh(value: Decimal | None) -> str:
@@ -512,6 +501,20 @@ def _change_label(value: Decimal | None) -> str:
     return f"{arrow} {abs(value):.1f}%"
 
 
+def _year_change_sentence(subject: str, value: Decimal | None) -> str:
+    if value is None:
+        return f"{subject}: el canvi respecte del mateix període de l'any anterior no es pot calcular."
+    if value > 0:
+        verb = "ha augmentat"
+    elif value < 0:
+        verb = "ha disminuït"
+    else:
+        return f"{subject} s'ha mantingut igual que en el mateix període de l'any anterior."
+    return (
+        f"{subject} {verb} un {abs(value):.0f}% respecte del mateix període de l'any anterior."
+    )
+
+
 def _signed_eur(value: Decimal | None) -> str:
     return "N/D" if value is None else f"{value:+.2f}"
 
@@ -523,8 +526,7 @@ def _decomposition_html(comparison: BillComparison) -> str:
         return ""
     return (
         "<li>Canvi estimat del cost diari atribuït al consum: "
-        f"{consumption:+.2f} EUR/dia; al preu: {price:+.2f} EUR/dia. "
-        "Repartiment simètric basat en mitjanes diàries.</li>"
+        f"{consumption:+.2f} EUR/dia; al preu: {price:+.2f} EUR/dia.</li>"
     )
 
 
@@ -545,7 +547,7 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
             f'<tr><td style="width:100px;white-space:nowrap;">{item.hour:02d}:00–'
             f'{(item.hour + 1) % 24:02d}:00</td><td style="width:100%;">'
             f'<div style="height:16px;background:{color};width:{width}%;min-width:2px;">&nbsp;</div>'
-            f'</td><td style="white-space:nowrap;padding-left:8px;">{item.average_kwh_per_day:.3f} kWh/dia</td></tr>'
+            f'</td><td style="white-space:nowrap;padding-left:8px;">{_whole_kwh(item.average_kwh_per_day)} kWh/dia</td></tr>'
         )
     observations = []
     if analysis.highest_hour is not None:
@@ -558,7 +560,7 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
         hours = ", ".join(f"{item.hour:02d}:00" for item in analysis.expensive_hours[:3])
         observations.append(f"Consum elevat en hores cares: {hours}.")
     text = "\nConsum mitjà per hora i dia (kWh/dia):\n" + "\n".join(
-        f"{item.hour:02d}:00–{(item.hour + 1) % 24:02d}:00: {item.average_kwh_per_day:.3f} kWh/dia"
+        f"{item.hour:02d}:00–{(item.hour + 1) % 24:02d}:00: {_whole_kwh(item.average_kwh_per_day)} kWh/dia"
         for item in values
     )
     text += "\n" + "\n".join(observations) + "\n"
@@ -574,19 +576,18 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
     return text, html
 
 
-def _daily_content(analysis: BillAnalysis) -> tuple[str, str]:
+def _daily_content(analysis: BillAnalysis) -> str:
     top_days = analysis.top_days
-    text = "\nDies amb més consum:\n" + "\n".join(
-        f"{index}. {item.day:%d/%m/%Y} — {item.kwh:.3f} kWh"
-        for index, item in enumerate(top_days, start=1)
+    text = "\nDies amb més consum (top 3):\n" + "\n".join(
+        f"{item.day:%d/%m/%Y} - {format_kwh(item.kwh)} kWh"
+        for item in top_days
     )
-    text += f"\nMitjana: {analysis.kwh_per_day:.3f} kWh/dia.\n"
-    html = (
-        "<h3>Dies amb més consum</h3><ol>"
-        + "".join(f"<li>{item.day:%d/%m/%Y}: {item.kwh:.3f} kWh</li>" for item in top_days)
-        + f"</ol><p>Mitjana del període: {analysis.kwh_per_day:.3f} kWh/dia.</p>"
-    )
-    return text, html
+    return text
+
+
+def _whole_kwh(value: Decimal) -> int:
+    """Round consumption for display as a whole number of kWh."""
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _savings_content(savings: SavingsEstimate | None) -> tuple[str, str]:
@@ -631,7 +632,7 @@ def _daily_averages(
     """Return average kWh/day and EUR/day for an inclusive date range."""
     days = (final_date - initial_date).days + 1
     return (
-        (consumption_kwh / days).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+        (consumption_kwh / days).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
         (cost_eur / days).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
     )
 
@@ -667,55 +668,36 @@ def _previous_period_content(
         ),
     )
     comparison_bands = (
-        ("Preu baix — període actual", current_bands[0][1], "#2E7D32"),
-        ("Preu baix — any anterior", bands[0][1], "#81C784"),
-        ("Preu mitjà — període actual", current_bands[1][1], "#F9A825"),
-        ("Preu mitjà — any anterior", bands[1][1], "#FFE082"),
-        ("Preu alt — període actual", current_bands[2][1], "#C62828"),
-        ("Preu alt — any anterior", bands[2][1], "#EF9A9A"),
+        ("Preu baix — període actual", current_bands[0][1], BAND_COLORS[0]),
+        ("Preu baix — any anterior", bands[0][1], PREVIOUS_BAND_COLORS[0]),
+        ("Preu mitjà — període actual", current_bands[1][1], BAND_COLORS[1]),
+        ("Preu mitjà — any anterior", bands[1][1], PREVIOUS_BAND_COLORS[1]),
+        ("Preu alt — període actual", current_bands[2][1], BAND_COLORS[2]),
+        ("Preu alt — any anterior", bands[2][1], PREVIOUS_BAND_COLORS[2]),
     )
     comparison_text = "\n".join(
-        f"- {label}: {amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
+        f"- {label}: {_whole_kwh(amount)} kWh"
         for label, amount, _color in comparison_bands
     )
-    comparison_legend = "".join(
-        "<li>"
-        f'<span style="color: {color};">&#9632;</span> {label}: '
-        f"{amount.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)} kWh"
-        "</li>"
-        for label, amount, color in comparison_bands
-    )
-    comparison_chart_cid = "comparativa-consum-per-preu"
     year_comparison = calculate_bill_comparison(report.analysis, previous.analysis)
+    year_avg_price_sentence = _year_change_sentence(
+        "El preu mitjà de l'electricitat", year_comparison.average_price_change_percent
+    )
     text = (
         "\nComparativa amb el mateix període de l'any anterior:\n"
-        f"Consum: {report.analysis.total_kwh:.3f} kWh; any anterior: "
-        f"{previous.analysis.total_kwh:.3f} kWh; canvi {_change_label(calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}\n"
-        f"Consum diari: {report.analysis.kwh_per_day:.3f} kWh/dia; any anterior: "
-        f"{previous.analysis.kwh_per_day:.3f} kWh/dia; canvi {_change_label(year_comparison.consumption_per_day_change_percent)}\n"
-        f"Cost: {report.analysis.total_cost_eur:.2f} EUR; any anterior: "
-        f"{previous.analysis.total_cost_eur:.2f} EUR; canvi {_change_label(calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}\n"
-        f"Preu mitjà: {_money_per_kwh(report.analysis.average_price_eur_per_kwh)} EUR/kWh; any anterior: "
-        f"{_money_per_kwh(previous.analysis.average_price_eur_per_kwh)} EUR/kWh; canvi {_change_label(year_comparison.average_price_change_percent)}\n"
+        f"{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}\n"
+        f"{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}\n"
+        f"{year_avg_price_sentence}\n"
         "Comparativa del consum per franja de preu:\n"
         f"{comparison_text}\n"
     )
     html = (
         "<h2>Comparativa amb el mateix període de l'any anterior</h2>"
-        "<ul>"
-        f"<li>Consum: {report.analysis.total_kwh:.3f} kWh; any anterior: "
-        f"{previous.analysis.total_kwh:.3f} kWh; {_change_label(calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
-        f"<li>Consum diari: {report.analysis.kwh_per_day:.3f} kWh/dia; any anterior: "
-        f"{previous.analysis.kwh_per_day:.3f} kWh/dia; {_change_label(year_comparison.consumption_per_day_change_percent)}</li>"
-        f"<li>Cost: {report.analysis.total_cost_eur:.2f} EUR; any anterior: "
-        f"{previous.analysis.total_cost_eur:.2f} EUR; {_change_label(calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
-        f"<li>Preu mitjà: {_money_per_kwh(report.analysis.average_price_eur_per_kwh)} EUR/kWh; any anterior: "
-        f"{_money_per_kwh(previous.analysis.average_price_eur_per_kwh)} EUR/kWh; {_change_label(year_comparison.average_price_change_percent)}</li>"
-        "</ul><h3>Consum per franja de preu</h3>"
-        f'<img src="cid:{comparison_chart_cid}" '
-        'alt="Gràfic de columnes del consum per franja de preu i període" '
-        'width="360" height="280">'
-        f"<ul>{comparison_legend}</ul>"
+        '<ul style="margin-bottom:16px;">'
+        f"<li>{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
+        f"<li>{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
+        f"<li>{year_avg_price_sentence}</li>"
+        "</ul>"
     )
     return text, html, comparison_bands
 
@@ -727,90 +709,56 @@ def _consumption_percentage(amount: Decimal, total: Decimal) -> Decimal:
     return (amount * Decimal("100") / total).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
-def _pie_chart_png(bands: list[tuple[Decimal, str]]) -> bytes:
-    """Create a dependency-free PNG pie chart for inline email use."""
-    size = 280
-    center = size // 2
-    radius = 125
-    total = sum(amount for amount, _color in bands)
-    rgb_bands = [
-        (_hex_to_rgb(color), amount / total if total else Decimal(0)) for amount, color in bands
-    ]
-    rows = []
-    for y in range(size):
-        row = bytearray(b"\x00")
-        for x in range(size):
-            dx, dy = x - center, y - center
-            if dx * dx + dy * dy > radius * radius:
-                row.extend((255, 255, 255))
-                continue
-            if not total:
-                row.extend((158, 158, 158))
-                continue
-            angle = (atan2(dy, dx) + pi / 2) % (2 * pi)
-            portion = Decimal(str(angle / (2 * pi)))
-            cumulative = Decimal(0)
-            for index, (color, share) in enumerate(rgb_bands):
-                cumulative += share
-                if portion < cumulative or index == len(rgb_bands) - 1:
-                    row.extend(color)
-                    break
-        rows.append(bytes(row))
-    payload = zlib.compress(b"".join(rows), level=9)
-    return b"".join(
-        (
-            b"\x89PNG\r\n\x1a\n",
-            _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)),
-            _png_chunk(b"IDAT", payload),
-            _png_chunk(b"IEND", b""),
-        )
+def _chart_html(url: str, alt: str) -> str:
+    """Use table alignment for email clients and scale down on narrow screens."""
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        '<tr><td align="center" style="text-align:center;padding:12px 0 0;">'
+        f'<img src="{escape(url, quote=True)}" alt="{escape(alt, quote=True)}" '
+        'width="648" style="display:block;width:100%;max-width:648px;height:auto;'
+        'margin:0 auto;border:0;"></td></tr></table>'
     )
 
 
-def _price_band_comparison_png(bands: list[tuple[Decimal, str]]) -> bytes:
-    """Create a six-column PNG chart in the supplied low-to-high price order."""
-    size = 360
-    baseline = 235
-    maximum_height = 180
-    maximum = max((amount for amount, _color in bands), default=Decimal("1"))
-    maximum = max(maximum, Decimal("1"))
-    bar_left_edges = (25, 80, 135, 190, 245, 300)
-    bar_width = 35
-    bar_specs = [
-        (left, int(amount / maximum * maximum_height), _hex_to_rgb(color))
-        for left, (amount, color) in zip(bar_left_edges, bands, strict=True)
-    ]
-    rows = []
-    for y in range(size):
-        row = bytearray(b"\x00")
-        for x in range(size):
-            pixel = (255, 255, 255)
-            if y == baseline and 15 <= x <= 345:
-                pixel = (80, 80, 80)
-            for left, height, color in bar_specs:
-                if left <= x < left + bar_width and baseline - height <= y < baseline:
-                    pixel = color
-                    break
-            row.extend(pixel)
-        rows.append(bytes(row))
-    payload = zlib.compress(b"".join(rows), level=9)
-    return b"".join(
-        (
-            b"\x89PNG\r\n\x1a\n",
-            _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)),
-            _png_chunk(b"IDAT", payload),
-            _png_chunk(b"IEND", b""),
-        )
+def _side_by_side_charts_html(pie_url: str, podium_url: str) -> str:
+    """Place the distribution and top-days charts side by side."""
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="table-layout:fixed;margin:12px 0;"><tr>'
+        '<td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
+        f'<img src="{escape(pie_url, quote=True)}" alt="" '
+        'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
+        '</td><td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
+        f'<img src="{escape(podium_url, quote=True)}" alt="" '
+        'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
+        '</td></tr></table>'
     )
 
 
-def _hex_to_rgb(color: str) -> tuple[int, int, int]:
-    """Convert a six-digit CSS hex color to the RGB bytes used by PNG."""
-    return tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
-
-
-def _png_chunk(kind: bytes, data: bytes) -> bytes:
-    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+def _write_report_charts(report: InvoiceReport, email: EmailSettings) -> dict[str, str]:
+    """Cache Matplotlib previews locally; link email to remote-rendered charts."""
+    charts = {
+        "pie": price_pie_png(report.analysis.distribution),
+        "podium": daily_podium_png(report.analysis.top_days, report.analysis.kwh_per_day),
+        "columns": price_columns_png(
+            report.analysis.distribution,
+            report.previous_period.analysis.distribution if report.previous_period else None,
+        ),
+    }
+    # Random per-message paths reveal no invoice IDs or recipient information.
+    key = token_urlsafe(24)
+    directory = email.chart_dir / key
+    directory.mkdir(parents=True, exist_ok=False)
+    for name, data in charts.items():
+        (directory / f"{name}.png").write_bytes(data)
+    return {
+        "pie": price_pie_url(report.analysis.distribution),
+        "podium": daily_podium_url(report.analysis.top_days),
+        "columns": price_columns_url(
+            report.analysis.distribution,
+            report.previous_period.analysis.distribution if report.previous_period else None,
+        ),
+    }
 
 
 def send_invoice_report(
@@ -821,7 +769,9 @@ def send_invoice_report(
 ) -> InvoiceReport:
     """Send a consumption and cost summary for the latest or selected invoice."""
     report = latest_invoice_report(database, client_id, invoice_id)
+    chart_urls = _write_report_charts(report, email)
+    message = _report_message(report, email.sender, chart_urls)
     with smtplib.SMTP_SSL(email.host, email.port, timeout=30) as smtp:
         smtp.login(email.sender, email.password)
-        smtp.send_message(_report_message(report, email.sender))
+        smtp.send_message(message)
     return report

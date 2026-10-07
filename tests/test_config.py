@@ -74,8 +74,8 @@ def test_email_settings_require_and_hide_app_password(monkeypatch):
 
     monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setenv("SMTP_PORT", "465")
-    monkeypatch.setenv("SMTP_USERNAME", "ohm.my.god.ep@gmail.com")
+    monkeypatch.setenv("SMTP_USERNAME", "sender@example.com")
     monkeypatch.setenv("SMTP_APP_PASSWORD", "app-password")
     settings = load_email_settings()
-    assert settings.sender == "ohm.my.god.ep@gmail.com"
+    assert settings.sender == "sender@example.com"
     assert "app-password" not in repr(settings)

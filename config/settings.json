@@ -7,6 +7,7 @@
   "periods_to_download": 6,
   "download_dir": "data/downloads",
   "processed_dir": "data/processed",
+  "report_chart_dir": "data/processed/report-charts",
   "imported_dir": "data/imported",
   "duplicates_dir": "data/duplicates",
   "failed_dir": "data/failed"

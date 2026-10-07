@@ -254,15 +254,21 @@ def generate_bill_insights(
 ) -> tuple[str, ...]:
     """Generate data-supported, plain-language Catalan summary and diagnostic points."""
     summary = [f"Aquesta factura és de {current.total_cost_eur:.2f} EUR."]
-    if comparison.consumption_per_day_change_percent is not None:
+    if (
+        comparison.consumption_per_day_change_percent is not None
+        and abs(comparison.consumption_per_day_change_percent) >= Decimal("1")
+    ):
         summary.append(
             f"El consum diari ha {('augmentat' if comparison.consumption_per_day_change_percent > 0 else 'baixat' if comparison.consumption_per_day_change_percent < 0 else 'quedat igual')} "
-            f"un {abs(comparison.consumption_per_day_change_percent):.1f}% respecte de la factura anterior."
+            f"un {abs(comparison.consumption_per_day_change_percent):.0f}% respecte de la factura anterior."
         )
-    if comparison.cost_per_day_change_percent is not None:
+    if (
+        comparison.cost_per_day_change_percent is not None
+        and abs(comparison.cost_per_day_change_percent) >= Decimal("1")
+    ):
         summary.append(
             f"El cost diari ha {('augmentat' if comparison.cost_per_day_change_percent > 0 else 'baixat' if comparison.cost_per_day_change_percent < 0 else 'quedat igual')} "
-            f"un {abs(comparison.cost_per_day_change_percent):.1f}%."
+            f"un {abs(comparison.cost_per_day_change_percent):.0f}%."
         )
     if (
         comparison.consumption_per_day_change_percent is not None
@@ -270,6 +276,8 @@ def generate_bill_insights(
         and comparison.average_price_change_percent is not None
         and comparison.consumption_per_day_change_percent < 0
         and comparison.cost_per_day_change_percent > 0
+        and abs(comparison.consumption_per_day_change_percent) >= Decimal("1")
+        and abs(comparison.cost_per_day_change_percent) >= Decimal("1")
     ):
         summary.append("Tot i consumir menys cada dia, el preu mitjà de l'electricitat ha pujat.")
     elif savings is not None:
@@ -289,11 +297,11 @@ def generate_recommendations(
             for hour in analysis.expensive_hours[:2]
         )
         recommendations.append(
-            f"Hi ha força consum en hores cares ({times}). Si pots, programa-hi aparells flexibles a una altra hora."
+            f"Hi ha força consum en hores cares ({times}). Si pots, programa aparells flexibles a una altra hora."
         )
     elif expensive_share >= Decimal("20"):
         recommendations.append(
-            f"El {expensive_share:.1f}% del consum és en hores cares; revisa si algun ús flexible es pot moure."
+            f"El {expensive_share:.1f}% del consum és en hores cares; revisa si algun consum flexible es pot moure."
         )
     elif analysis.distribution.cheap_percent >= Decimal("60"):
         recommendations.append(
@@ -309,19 +317,32 @@ def generate_recommendations(
 def generate_diagnostics(analysis: BillAnalysis, comparison: BillComparison) -> tuple[str, ...]:
     """Describe measurable reasons for the bill using its hourly and prior-bill data."""
     messages = [
-        f"El {analysis.distribution.expensive_percent:.1f}% del consum s'ha fet a un preu car.",
-        f"El {analysis.distribution.cheap_percent:.1f}% del consum s'ha fet a un preu barat.",
+        f"El {analysis.distribution.expensive_percent:.0f}% del consum s'ha fet a un preu car.",
+        f"El {analysis.distribution.cheap_percent:.0f}% del consum s'ha fet a un preu barat.",
     ]
     if comparison.consumption_per_day_change_percent is not None:
         delta = comparison.consumption_per_day_change_percent
         direction = "més" if delta > 0 else "menys" if delta < 0 else "igual"
         messages.append(
-            f"El consum diari ha estat {direction} ({abs(delta):.1f}% respecte de l'anterior)."
+            f"El consum diari ha estat {direction} que en la factura anterior "
+            f"({abs(delta):.0f}%)."
         )
     if comparison.average_price_change_percent is not None:
         delta = comparison.average_price_change_percent
-        direction = "pujat" if delta > 0 else "baixat" if delta < 0 else "igual"
-        messages.append(f"El preu mitjà de l'electricitat ha {direction} ({abs(delta):.1f}%).")
+        if delta > 0:
+            messages.append(
+                f"El preu mitjà de l'electricitat ha pujat un {abs(delta):.0f}% "
+                "respecte de la factura anterior."
+            )
+        elif delta < 0:
+            messages.append(
+                f"El preu mitjà de l'electricitat ha baixat un {abs(delta):.0f}% "
+                "respecte de la factura anterior."
+            )
+        else:
+            messages.append(
+                "El preu mitjà de l'electricitat s'ha mantingut igual que en la factura anterior."
+            )
     if analysis.expensive_hours:
         times = ", ".join(
             f"{hour.hour:02d}:00–{(hour.hour + 1) % 24:02d}:00"

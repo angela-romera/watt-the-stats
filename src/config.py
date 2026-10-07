@@ -28,6 +28,7 @@ class EmailSettings:
     password: str = field(repr=False)
     host: str
     port: int
+    chart_dir: Path = PROJECT_ROOT / "data" / "processed" / "report-charts"
 
 
 def load_database_settings() -> DatabaseSettings:
@@ -64,11 +65,16 @@ def load_email_settings() -> EmailSettings:
         raise ValueError("SMTP_PORT must be an integer") from None
     if not 1 <= port <= 65535:
         raise ValueError("SMTP_PORT must be between 1 and 65535")
+    with SETTINGS_FILE.open(encoding="utf-8") as settings_file:
+        values = json.load(settings_file)
     return EmailSettings(
         sender=os.environ["SMTP_USERNAME"].strip(),
         password=os.environ["SMTP_APP_PASSWORD"],
         host=os.environ["SMTP_HOST"].strip(),
         port=port,
+        chart_dir=(
+            PROJECT_ROOT / values.get("report_chart_dir", "data/processed/report-charts")
+        ).resolve(),
     )
 
 

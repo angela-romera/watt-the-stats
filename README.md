@@ -43,6 +43,33 @@ Invoice report emails use the `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, and
 app password (not the account's usual password). The recipient is read from
 `client.email_to`.
 
+Report emails contain a centered consumption doughnut, a podium of the three
+highest-consumption days, and columns by price band. Where complete previous-year
+data exists, the columns compare the two periods. The charts load through
+QuickChart HTTPS URLs, following an HTML-only email pattern. The email has
+only plain-text and HTML parts, so
+it has no PNG attachments. Its images scale to the email width. Recipients may
+need to enable remote images in their email app.
+
+QuickChart receives the aggregate consumption amounts and the dates shown in
+the podium because these values are encoded in each image URL. A person with a
+complete URL can see that chart. No recipient address, invoice ID, credentials,
+or raw hourly data are included. The separate chart service remains private and
+is not used by report emails. Making it private prevents Gmail from loading its
+images directly.
+
+Each send also renders the same report data as three Matplotlib PNGs and keeps
+them locally under `report_chart_dir` from `config/settings.json`. These files
+are ignored by Git and are never attached to the email. To inspect the chart
+design with fictitious data without a database connection or email:
+
+```powershell
+uv run python -m src.preview_charts
+```
+
+Open `data/processed/chart-preview/index.html` for the three chart designs and
+examples with zero consumption, small values, ties, and missing history.
+
 Initialize a new database with [sql/postgresql_schema.sql](sql/postgresql_schema.sql).
 The script targets PostgreSQL's `public` schema. It is for a new database and
 does not migrate an existing SQL Server schema. The uploader manages neither
