@@ -704,7 +704,7 @@ def _previous_period_content(
         f"<li>{_year_change_sentence('El consum', calculate_percentage_change(report.analysis.total_kwh, previous.analysis.total_kwh))}</li>"
         f"<li>{_year_change_sentence('El cost', calculate_percentage_change(report.analysis.total_cost_eur, previous.analysis.total_cost_eur))}</li>"
         f"<li>{year_avg_price_sentence}</li>"
-        "</ul><h3>Consum per franja de preu</h3>"
+        "</ul>"
         f'<ul style="list-style:none;padding-left:0;margin-left:0;">{comparison_legend}</ul>'
     )
     return text, html, comparison_bands
@@ -734,12 +734,10 @@ def _side_by_side_charts_html(pie_url: str, podium_url: str) -> str:
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="table-layout:fixed;margin:12px 0;"><tr>'
         '<td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
-        '<h3 style="font-size:16px;margin:8px 0;">Consum per franja de preu</h3>'
-        f'<img src="{escape(pie_url, quote=True)}" alt="Consum per franja de preu" '
+        f'<img src="{escape(pie_url, quote=True)}" alt="" '
         'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
         '</td><td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
-        '<h3 style="font-size:16px;margin:8px 0;">Top 3 dies amb m\u00e9s consum</h3>'
-        f'<img src="{escape(podium_url, quote=True)}" alt="Top 3 dies per consum: data i kWh" '
+        f'<img src="{escape(podium_url, quote=True)}" alt="" '
         'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
         '</td></tr></table>'
     )

@@ -19,6 +19,10 @@ PIE_PERCENT_FORMATTER = (
     "context.chart.data.datasets[0].data.reduce((sum,item)=>sum+item,0)*100)+'%';}"
 )
 PIE_PERCENT_FORMATTER_PLACEHOLDER = "__PIE_PERCENT_FORMATTER__"
+PODIUM_KWH_FORMATTER = (
+    "function(value,context){return context.dataset.actualKwh[context.dataIndex];}"
+)
+PODIUM_KWH_FORMATTER_PLACEHOLDER = "__PODIUM_KWH_FORMATTER__"
 INK = "#223247"
 MUTED = "#68788C"
 GRID = "#E5EBF2"
@@ -50,6 +54,7 @@ def _options() -> dict:
 def _url(config: dict, *, version: str = "4", height: int = 420) -> str:
     chart = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
     chart = chart.replace(json.dumps(PIE_PERCENT_FORMATTER_PLACEHOLDER), PIE_PERCENT_FORMATTER)
+    chart = chart.replace(json.dumps(PODIUM_KWH_FORMATTER_PLACEHOLDER), PODIUM_KWH_FORMATTER)
     query = urlencode(
         {
             "version": version,
@@ -83,13 +88,13 @@ def price_pie_url(distribution: PriceDistribution) -> str:
         "anchor": "center",
         "align": "center",
         "color": "#FFFFFF",
-        "font": {"family": "Arial", "size": 14, "weight": "bold"},
+        "font": {"family": "Arial", "size": 30, "weight": "bold"},
         "formatter": PIE_PERCENT_FORMATTER_PLACEHOLDER,
     }
     options["plugins"]["doughnutlabel"] = {
         "labels": [
-            {"text": str(rounded_total), "color": INK, "font": {"size": 35, "weight": "bold"}},
-            {"text": "kWh", "color": MUTED, "font": {"size": 13}},
+            {"text": str(rounded_total), "color": INK, "font": {"size": 70, "weight": "bold"}},
+            {"text": "kWh", "color": MUTED, "font": {"size": 30}},
         ]
     }
     options["cutoutPercentage"] = 45
@@ -115,55 +120,72 @@ def price_pie_url(distribution: PriceDistribution) -> str:
 
 
 def daily_podium_url(days: Sequence[DailyUsage]) -> str:
-    """Put the highest day in the center, using actual kWh for bar heights."""
+    """Render the top days as a stepped podium, with the winner in the center."""
     if any(not item.kwh.is_finite() or item.kwh < 0 for item in days):
         raise ValueError("Chart consumption must be finite and non-negative")
     ranked = sorted(days, key=lambda item: (-item.kwh, item.day))[:3]
     ordered = [ranked[index] if index < len(ranked) else None for index in (1, 0, 2)]
     labels = []
+    heights = []
+    colors = []
+    consumption_labels = []
+    podium_colors = {1: "#E8B34D", 2: "#A9BACD", 3: "#C68D6D"}
     for item in ordered:
         if item is None:
             labels.append("")
+            heights.append(0)
+            colors.append("#E5EBF2")
+            consumption_labels.append("")
             continue
         place = 1 + sum(other.kwh > item.kwh for other in ranked)
-        labels.append([f"{place} · {item.day:%d/%m/%Y}", f"{format_kwh(item.kwh)} kWh"])
+        labels.append(f"{item.day:%d/%m/%Y}")
+        heights.append(4 - place)
+        colors.append(podium_colors.get(place, "#A9BACD"))
+        rounded_kwh = int(item.kwh.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        consumption_labels.append(f"{rounded_kwh} kWh")
     options = _options()
     options["plugins"]["datalabels"] = {
-        "display": False,
+        "display": bool(ranked),
+        "anchor": "end",
+        "align": "top",
+        "offset": 4,
+        "color": INK,
+        "font": {"family": "Arial", "size": 30, "weight": "bold"},
+        "formatter": PODIUM_KWH_FORMATTER_PLACEHOLDER,
     }
+    options["layout"]["padding"] = {"top": 20, "right": 25, "bottom": 12, "left": 25}
     options["scales"] = {
         "x": {
             "grid": {"display": False},
             "border": {"display": False},
-            "ticks": {"color": INK, "font": {"family": "Arial", "size": 14, "weight": "bold"}},
+            "ticks": {"color": INK, "font": {"family": "Arial", "size": 30}},
         },
         "y": {
             "beginAtZero": True,
-            "suggestedMax": max((float(day.kwh) for day in ranked), default=0) * 1.22 or 1,
-            "grid": {"color": GRID},
-            "border": {"display": False, "dash": [4, 4]},
-            "ticks": {"color": MUTED, "maxTicksLimit": 5},
-            "title": {"display": True, "text": "kWh", "color": MUTED},
+            "max": 3.4,
+            "grid": {"display": False},
+            "border": {"display": False},
+            "ticks": {"display": False},
         },
     }
     config = {
         "type": "bar",
         "data": {
-            "labels": labels if ranked else ["", "Sense dades diàries", ""],
+            "labels": labels if ranked else ["", "Sense dades diaries", ""],
             "datasets": [
                 {
-                    "data": [float(day.kwh) if day is not None else 0 for day in ordered],
-                    "backgroundColor": ["#A9BACD", "#E8B34D", "#C68D6D"],
-                    "borderRadius": 13,
-                    "barPercentage": 0.65,
-                    "categoryPercentage": 0.75,
+                    "data": heights,
+                    "actualKwh": consumption_labels,
+                    "backgroundColor": colors,
+                    "borderRadius": 8,
+                    "barPercentage": 0.98,
+                    "categoryPercentage": 0.98,
                 }
             ],
         },
         "options": options,
     }
     return _url(config, height=540)
-
 
 def price_columns_url(current: PriceDistribution, previous: PriceDistribution | None = None) -> str:
     """Show each price band on a shared zero-based scale."""
