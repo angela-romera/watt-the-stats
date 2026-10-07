@@ -111,12 +111,17 @@ def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch,
     sources = [unescape(url) for url in re.findall(r'<img src="([^"]+)"', html)]
     assert len(sources) == 3
     assert all(url.startswith("https://quickchart.io/chart?") for url in sources)
-    configs = [json.loads(parse_qs(urlsplit(url).query)["c"][0]) for url in sources]
-    assert [config["type"] for config in configs] == ["pie", "bar", "bar"]
-    assert configs[1]["data"]["labels"][1][0].startswith("1 · ")
-    assert len(configs[2]["data"]["datasets"]) == 2
-    for url in sources:
-        assert parse_qs(urlsplit(url).query)["version"] == ["4"]
+    chart_configs = [parse_qs(urlsplit(url).query)["c"][0] for url in sources]
+    assert '"type":"doughnut"' in chart_configs[0]
+    assert '"formatter":function(value,context)' in chart_configs[0]
+    assert '"doughnutlabel"' in chart_configs[0]
+    podium = json.loads(chart_configs[1])
+    columns = json.loads(chart_configs[2])
+    assert [podium["type"], columns["type"]] == ["bar", "bar"]
+    assert podium["data"]["labels"][1][0].startswith("1 · ")
+    assert len(columns["data"]["datasets"]) == 2
+    versions = [parse_qs(urlsplit(url).query)["version"][0] for url in sources]
+    assert versions == ["2", "4", "4"]
     assert len(list(chart_email.chart_dir.glob("*/*.png"))) == 3
     # Check the serialized email too: images must not become unnamed MIME attachments.
     parsed = BytesParser(policy=policy.default).parsebytes(message.as_bytes())

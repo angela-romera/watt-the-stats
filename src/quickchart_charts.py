@@ -6,7 +6,7 @@ Only the values and dates visible in the charts are included in the URL.
 
 import json
 from collections.abc import Sequence
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from math import isfinite
 from urllib.parse import urlencode
 
@@ -14,10 +14,14 @@ from src.report_calculations import DailyUsage, PriceDistribution
 from src.report_charts import BAND_COLORS, BAND_LABELS, PREVIOUS_BAND_COLORS, format_kwh
 
 QUICKCHART_URL = "https://quickchart.io/chart"
+PIE_PERCENT_FORMATTER = (
+    "function(value,context){return Math.round(value/"
+    "context.chart.data.datasets[0].data.reduce((sum,item)=>sum+item,0)*100)+'%';}"
+)
+PIE_PERCENT_FORMATTER_PLACEHOLDER = "__PIE_PERCENT_FORMATTER__"
 INK = "#223247"
 MUTED = "#68788C"
 GRID = "#E5EBF2"
-BACKGROUND = "#F4F7FB"
 
 
 def _values(distribution: PriceDistribution) -> list[float]:
@@ -31,78 +35,68 @@ def _values(distribution: PriceDistribution) -> list[float]:
     return values
 
 
-def _options(title: str, subtitle: str) -> dict:
+def _options() -> dict:
     return {
         "responsive": False,
         "animation": False,
-        "layout": {"padding": {"top": 18, "right": 25, "bottom": 12, "left": 25}},
+        "layout": {"padding": {"top": 8, "right": 25, "bottom": 12, "left": 25}},
         "plugins": {
-            "title": {
-                "display": True,
-                "text": title,
-                "align": "start",
-                "color": INK,
-                "font": {"family": "Arial", "size": 23, "weight": "bold"},
-                "padding": {"bottom": 5},
-            },
-            "subtitle": {
-                "display": True,
-                "text": subtitle,
-                "align": "start",
-                "color": MUTED,
-                "font": {"family": "Arial", "size": 13},
-                "padding": {"bottom": 22},
-            },
             "legend": {"display": False},
             "datalabels": {"display": False},
         },
     }
 
 
-def _url(config: dict) -> str:
+def _url(config: dict, *, version: str = "4", height: int = 420) -> str:
+    chart = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
+    chart = chart.replace(json.dumps(PIE_PERCENT_FORMATTER_PLACEHOLDER), PIE_PERCENT_FORMATTER)
     query = urlencode(
         {
-            "version": "4",
+            "version": version,
             "format": "png",
-            "backgroundColor": BACKGROUND,
+            "backgroundColor": "transparent",
             "width": "648",
-            "height": "420",
+            "height": str(height),
             "devicePixelRatio": "2",
-            "c": json.dumps(config, ensure_ascii=False, separators=(",", ":")),
+            "c": chart,
         }
     )
     return f"{QUICKCHART_URL}?{query}"
 
 
 def price_pie_url(distribution: PriceDistribution) -> str:
-    """Render a proportional pie, with the amounts and shares in its legend."""
+    """Render a doughnut with centered total consumption and no legend."""
     values = _values(distribution)
     total = sum(values)
+    total_decimal = distribution.cheap_kwh + distribution.medium_kwh + distribution.expensive_kwh
+    rounded_total = int(total_decimal.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     if total:
-        labels = [
-            f"{name} · {format_kwh(amount)} kWh · {amount / total:.0%}"
-            for name, amount in zip(BAND_LABELS, values, strict=True)
-        ]
+        labels = list(BAND_LABELS)
         colors = list(BAND_COLORS)
     else:
         values = [1]
         labels = ["Sense consum registrat"]
         colors = [GRID]
-    options = _options("On va el teu consum?", "Distribució per franja de preu")
-    options["plugins"]["legend"] = {
-        "display": True,
-        "position": "right",
+    options = _options()
+    options["plugins"]["datalabels"] = {
+        "display": bool(total),
+        "anchor": "center",
         "align": "center",
-        "labels": {
-            "color": INK,
-            "boxWidth": 15,
-            "boxHeight": 15,
-            "padding": 18,
-            "font": {"family": "Arial", "size": 13},
-        },
+        "color": "#FFFFFF",
+        "font": {"family": "Arial", "size": 14, "weight": "bold"},
+        "formatter": PIE_PERCENT_FORMATTER_PLACEHOLDER,
     }
+    options["plugins"]["doughnutlabel"] = {
+        "labels": [
+            {"text": str(rounded_total), "color": INK, "font": {"size": 35, "weight": "bold"}},
+            {"text": "kWh", "color": MUTED, "font": {"size": 13}},
+        ]
+    }
+    options["cutoutPercentage"] = 45
+    options["legend"] = {"display": False}
+    options["layout"]["padding"] = {"top": 8, "right": 25, "bottom": 12, "left": 25}
     config = {
-        "type": "pie",
+        "type": "doughnut",
         "data": {
             "labels": labels,
             "datasets": [
@@ -117,10 +111,10 @@ def price_pie_url(distribution: PriceDistribution) -> str:
         },
         "options": options,
     }
-    return _url(config)
+    return _url(config, version="2", height=540)
 
 
-def daily_podium_url(days: Sequence[DailyUsage], daily_average: Decimal) -> str:
+def daily_podium_url(days: Sequence[DailyUsage]) -> str:
     """Put the highest day in the center, using actual kWh for bar heights."""
     if any(not item.kwh.is_finite() or item.kwh < 0 for item in days):
         raise ValueError("Chart consumption must be finite and non-negative")
@@ -133,10 +127,7 @@ def daily_podium_url(days: Sequence[DailyUsage], daily_average: Decimal) -> str:
             continue
         place = 1 + sum(other.kwh > item.kwh for other in ranked)
         labels.append([f"{place} · {item.day:%d/%m/%Y}", f"{format_kwh(item.kwh)} kWh"])
-    options = _options(
-        "Els dies amb més consum",
-        f"Top 3 del període · mitjana {format_kwh(daily_average)} kWh/dia",
-    )
+    options = _options()
     options["plugins"]["datalabels"] = {
         "display": False,
     }
@@ -171,24 +162,14 @@ def daily_podium_url(days: Sequence[DailyUsage], daily_average: Decimal) -> str:
         },
         "options": options,
     }
-    return _url(config)
+    return _url(config, height=540)
 
 
 def price_columns_url(current: PriceDistribution, previous: PriceDistribution | None = None) -> str:
     """Show each price band on a shared zero-based scale."""
     values = _values(current)
     prior = _values(previous) if previous is not None else None
-    options = _options(
-        "El consum, franja a franja",
-        "Comparativa amb el mateix període de l'any anterior"
-        if prior is not None
-        else "Període actual",
-    )
-    options["plugins"]["legend"] = {
-        "display": prior is not None,
-        "position": "top",
-        "labels": {"color": MUTED, "font": {"family": "Arial", "size": 12}},
-    }
+    options = _options()
     options["plugins"]["datalabels"] = {
         "display": True,
         "anchor": "end",

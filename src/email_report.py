@@ -360,7 +360,7 @@ def _report_message(
     )
     comparison_text, comparison_html, _comparison_bands = _previous_period_content(report, bands)
     previous_invoice_text, previous_invoice_html = _previous_invoice_content(report)
-    daily_text, daily_html = _daily_content(report.analysis, chart_urls["podium"])
+    daily_text = _daily_content(report.analysis)
     savings_text, savings_html = _savings_content(report.savings)
     recommendation_text, recommendation_html = _recommendation_content(report.recommendations)
     insights_text = "\n".join(f"- {item}" for item in report.diagnostics)
@@ -377,8 +377,8 @@ def _report_message(
         f"Període: {report.initial_date:%d/%m/%Y} - {report.final_date:%d/%m/%Y}\n"
         f"Tarifa: {report.tariff}\n"
         f"Consum total: {consumption} kWh\n"
+        f"Consum mitj\u00e0 diari: {daily_consumption} kWh/dia\n"
         f"Cost total: {cost} EUR\n"
-        f"Consum mitja diaria: {daily_consumption} kWh/dia\n"
         f"Cost mitja diaria: {daily_cost} EUR/dia\n"
         f"Preu mitja: {effective_price} EUR/kWh\n\n"
         "RESUM\n"
@@ -393,15 +393,6 @@ def _report_message(
         f"{comparison_text}"
         f"{savings_text}{recommendation_text}"
     )
-    legend = "".join(
-        "<li>"
-        f'<span style="color: {color};font-size:20px;line-height:1;">&#9679;</span> '
-        f"{escape(label)}: "
-        f"{_whole_kwh(amount)} kWh "
-        f"({_consumption_percentage(amount, report.consumption_kwh)}%)"
-        "</li>"
-        for label, amount, color in bands
-    )
     message.add_alternative(
         '<html><body><div style="font-family:Arial,sans-serif;color:#263238;font-size:16px;line-height:1.5;max-width:680px;margin:auto;">'
         '<h1 style="font-size:25px;margin-bottom:4px;">Factura de la llum</h1>'
@@ -415,12 +406,10 @@ def _report_message(
         f"{report.final_date:%d/%m/%Y}<br>"
         f"<strong>Tarifa:</strong> {escape(report.tariff)}<br>"
         f"<strong>Consum total:</strong> {consumption} kWh<br>"
+        f"<strong>Consum mitj\u00e0 diari:</strong> {daily_consumption} kWh/dia<br>"
         f"<strong>Cost total:</strong> {cost} EUR<br>"
         f"<strong>Cost mitjà diari:</strong> {daily_cost} EUR/dia</p>"
-        "<h3>Distribució del consum segons el preu</h3>"
-        f'{_chart_html(chart_urls["pie"], "Distribució del consum per franja de preu")}'
-        f'<ul style="list-style:none;padding-left:0;margin-left:0;">{legend}</ul>'
-        f"{daily_html}"
+        f'{_side_by_side_charts_html(chart_urls["pie"], chart_urls["podium"])}'
         "<h2>Per què ha tingut aquest cost?</h2>"
         f"<ul>{insights_html}</ul>"
         f"{previous_invoice_html}{comparison_html}"
@@ -587,19 +576,13 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
     return text, html
 
 
-def _daily_content(analysis: BillAnalysis, chart_url: str) -> tuple[str, str]:
+def _daily_content(analysis: BillAnalysis) -> str:
     top_days = analysis.top_days
     text = "\nDies amb més consum (top 3):\n" + "\n".join(
         f"{item.day:%d/%m/%Y} - {format_kwh(item.kwh)} kWh"
         for item in top_days
     )
-    text += f"\nMitjana: {format_kwh(analysis.kwh_per_day)} kWh/dia.\n"
-    html = (
-        "<h3>Top 3 dies per consum</h3>"
-        f'{_chart_html(chart_url, "Top 3 dies per consum: data i kWh")}'
-        f"<p>Mitjana del període: {format_kwh(analysis.kwh_per_day)} kWh/dia.</p>"
-    )
-    return text, html
+    return text
 
 
 def _whole_kwh(value: Decimal) -> int:
@@ -745,6 +728,23 @@ def _chart_html(url: str, alt: str) -> str:
     )
 
 
+def _side_by_side_charts_html(pie_url: str, podium_url: str) -> str:
+    """Place the distribution and top-days charts side by side."""
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="table-layout:fixed;margin:12px 0;"><tr>'
+        '<td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
+        '<h3 style="font-size:16px;margin:8px 0;">Consum per franja de preu</h3>'
+        f'<img src="{escape(pie_url, quote=True)}" alt="Consum per franja de preu" '
+        'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
+        '</td><td width="50%" valign="top" style="width:50%;padding:6px;text-align:center;">'
+        '<h3 style="font-size:16px;margin:8px 0;">Top 3 dies amb m\u00e9s consum</h3>'
+        f'<img src="{escape(podium_url, quote=True)}" alt="Top 3 dies per consum: data i kWh" '
+        'width="320" style="display:block;width:100%;max-width:320px;height:auto;margin:0 auto;border:0;">'
+        '</td></tr></table>'
+    )
+
+
 def _write_report_charts(report: InvoiceReport, email: EmailSettings) -> dict[str, str]:
     """Cache Matplotlib previews locally; link email to remote-rendered charts."""
     charts = {
@@ -763,7 +763,7 @@ def _write_report_charts(report: InvoiceReport, email: EmailSettings) -> dict[st
         (directory / f"{name}.png").write_bytes(data)
     return {
         "pie": price_pie_url(report.analysis.distribution),
-        "podium": daily_podium_url(report.analysis.top_days, report.analysis.kwh_per_day),
+        "podium": daily_podium_url(report.analysis.top_days),
         "columns": price_columns_url(
             report.analysis.distribution,
             report.previous_period.analysis.distribution if report.previous_period else None,
