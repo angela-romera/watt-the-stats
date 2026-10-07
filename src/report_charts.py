@@ -114,7 +114,7 @@ def daily_podium_png(days: Sequence[DailyUsage], daily_average: Decimal) -> byte
         axis.set(xlim=(-0.6, 2.6), ylim=(0, 2.15))
         axis.set_axis_off()
         axis.axhline(0.08, color=GRID, linewidth=1.5)
-        colors = ("#E8B34D", "#A9BACD", "#C68D6D")
+        colors = ("#364152", "#778397", "#B9C1CC")
         if not ranked:
             axis.text(1, 1, "Sense dades diàries", color=MUTED, ha="center", va="center")
         for index, item in enumerate(ranked):

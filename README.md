@@ -43,7 +43,7 @@ Invoice report emails use the `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, and
 app password (not the account's usual password). The recipient is read from
 `client.email_to`.
 
-Report emails contain a centered consumption pie, a podium of the three
+Report emails contain a centered consumption doughnut, a podium of the three
 highest-consumption days, and columns by price band. Where complete previous-year
 data exists, the columns compare the two periods. The charts load through
 QuickChart HTTPS URLs, following an HTML-only email pattern. The email has

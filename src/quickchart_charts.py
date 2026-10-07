@@ -137,7 +137,7 @@ def daily_podium_url(days: Sequence[DailyUsage]) -> str:
     heights = []
     colors = []
     consumption_labels = []
-    podium_colors = {1: "#E8B34D", 2: "#A9BACD", 3: "#C68D6D"}
+    podium_colors = {1: "#364152", 2: "#778397", 3: "#B9C1CC"}
     for item in ordered:
         if item is None:
             labels.append("")
