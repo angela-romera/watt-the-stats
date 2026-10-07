@@ -1,6 +1,13 @@
+import json
+import re
+from dataclasses import replace
 from datetime import date, time
 from decimal import Decimal
+from email import policy
+from email.parser import BytesParser
+from html import unescape
 from unittest.mock import MagicMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -13,6 +20,11 @@ from src.email_report import (
 
 DATABASE = DatabaseSettings("host", "database", "user", "secret")
 EMAIL = EmailSettings("sender@example.com", "email-secret", "smtp.example.com", 465)
+
+
+@pytest.fixture
+def chart_email(tmp_path):
+    return replace(EMAIL, chart_dir=tmp_path)
 
 
 def install_database(
@@ -80,7 +92,7 @@ def test_report_is_not_sent_when_email_to_is_missing(monkeypatch):
     smtp.assert_not_called()
 
 
-def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch):
+def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch, chart_email):
     current = rows_for_day(date(2026, 1, 1))
     complete_previous = [
         (date(2025, 1, day), time(8), Decimal("1000"), Decimal("0.10"), Decimal("0.10"))
@@ -90,18 +102,36 @@ def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch)
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
 
-    send_invoice_report(DATABASE, EMAIL)
+    send_invoice_report(DATABASE, chart_email)
 
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     text = message.get_body("plain").get_content()
     html = message.get_body("html").get_content()
     assert "Comparativa amb el mateix període de l'any anterior" in text
-    assert 'src="cid:comparativa-consum-per-preu"' in html
-    charts = [part for part in message.walk() if part.get_content_type() == "image/png"]
-    assert len(charts) == 2
+    sources = [unescape(url) for url in re.findall(r'<img src="([^"]+)"', html)]
+    assert len(sources) == 3
+    assert all(url.startswith("https://quickchart.io/chart?") for url in sources)
+    configs = [json.loads(parse_qs(urlsplit(url).query)["c"][0]) for url in sources]
+    assert [config["type"] for config in configs] == ["pie", "bar", "bar"]
+    assert configs[1]["data"]["labels"][1][0].startswith("1 · ")
+    assert len(configs[2]["data"]["datasets"]) == 2
+    for url in sources:
+        assert parse_qs(urlsplit(url).query)["version"] == ["4"]
+    assert len(list(chart_email.chart_dir.glob("*/*.png"))) == 3
+    # Check the serialized email too: images must not become unnamed MIME attachments.
+    parsed = BytesParser(policy=policy.default).parsebytes(message.as_bytes())
+    assert list(parsed.iter_attachments()) == []
+    assert [part.get_content_type() for part in parsed.walk()] == [
+        "multipart/alternative",
+        "text/plain",
+        "text/html",
+    ]
+    assert "cid:" not in html
+    assert "data:image" not in html
+    assert html.count('align="center"') == 3
 
 
-def test_incomplete_previous_year_period_is_omitted(monkeypatch):
+def test_incomplete_previous_year_period_is_omitted(monkeypatch, chart_email):
     install_database(
         monkeypatch,
         rows_for_day(date(2026, 1, 1)),
@@ -110,22 +140,38 @@ def test_incomplete_previous_year_period_is_omitted(monkeypatch):
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
 
-    send_invoice_report(DATABASE, EMAIL)
+    send_invoice_report(DATABASE, chart_email)
 
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     assert (
         "Comparativa amb el mateix període de l'any anterior"
         not in message.get_body("plain").get_content()
     )
-    assert len([part for part in message.walk() if part.get_content_type() == "image/png"]) == 1
+    assert message.get_body("html").get_content().count('<img src="https://') == 3
+    assert not any(part.get_content_maintype() == "image" for part in message.walk())
+    chart_urls = [
+        unescape(url)
+        for url in re.findall(r'<img src="([^"]+)"', message.get_body("html").get_content())
+    ]
+    columns = json.loads(parse_qs(urlsplit(chart_urls[2]).query)["c"][0])
+    assert len(columns["data"]["datasets"]) == 1
 
 
-def test_hourly_consumption_section_is_removed(monkeypatch):
+def test_report_does_not_require_chart_hosting_credentials(monkeypatch, chart_email):
+    install_database(monkeypatch, rows_for_day(date(2026, 1, 1)), [])
+    smtp = MagicMock()
+    monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
+    send_invoice_report(DATABASE, chart_email)
+
+    smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+
+
+def test_hourly_consumption_section_is_removed(monkeypatch, chart_email):
     install_database(monkeypatch, rows_for_day(date(2026, 1, 1)), [])
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
 
-    send_invoice_report(DATABASE, EMAIL)
+    send_invoice_report(DATABASE, chart_email)
 
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     plain = message.get_body("plain").get_content()
@@ -133,11 +179,11 @@ def test_hourly_consumption_section_is_removed(monkeypatch):
     assert "PER QUÈ HA TINGUT AQUEST COST?" in plain
     assert "Per què ha tingut aquest cost?" in html
     assert "Quan has consumit?" not in html
-    assert "<tr><td style=\"width:100px" not in html
+    assert '<tr><td style="width:100px' not in html
     assert "Dies amb més consum" in plain
 
 
-def test_previous_invoice_is_found_by_dates_and_daily_values_render(monkeypatch):
+def test_previous_invoice_is_found_by_dates_and_daily_values_render(monkeypatch, chart_email):
     current = [(date(2026, 1, 1), time(20), Decimal("3100"), Decimal("0.20"), Decimal("0.62"))]
     previous_rows = [
         (date(2025, 12, 2), time(20), Decimal("1000"), Decimal("0.20"), Decimal("0.20"))
@@ -152,7 +198,7 @@ def test_previous_invoice_is_found_by_dates_and_daily_values_render(monkeypatch)
     smtp = MagicMock()
     monkeypatch.setattr("src.email_report.smtplib.SMTP_SSL", smtp)
 
-    send_invoice_report(DATABASE, EMAIL)
+    send_invoice_report(DATABASE, chart_email)
 
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     text = message.get_body("plain").get_content()
