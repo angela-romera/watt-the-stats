@@ -23,6 +23,8 @@ PODIUM_KWH_FORMATTER = (
     "function(value,context){return context.dataset.actualKwh[context.dataIndex];}"
 )
 PODIUM_KWH_FORMATTER_PLACEHOLDER = "__PODIUM_KWH_FORMATTER__"
+WHOLE_KWH_FORMATTER = "function(value){return Math.round(value).toString();}"
+WHOLE_KWH_FORMATTER_PLACEHOLDER = "__WHOLE_KWH_FORMATTER__"
 INK = "#223247"
 MUTED = "#68788C"
 GRID = "#E5EBF2"
@@ -55,6 +57,7 @@ def _url(config: dict, *, version: str = "4", height: int = 420) -> str:
     chart = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
     chart = chart.replace(json.dumps(PIE_PERCENT_FORMATTER_PLACEHOLDER), PIE_PERCENT_FORMATTER)
     chart = chart.replace(json.dumps(PODIUM_KWH_FORMATTER_PLACEHOLDER), PODIUM_KWH_FORMATTER)
+    chart = chart.replace(json.dumps(WHOLE_KWH_FORMATTER_PLACEHOLDER), WHOLE_KWH_FORMATTER)
     query = urlencode(
         {
             "version": version,
@@ -199,6 +202,7 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
         "offset": 3,
         "color": INK,
         "font": {"family": "Arial", "size": 11, "weight": "bold"},
+        "formatter": WHOLE_KWH_FORMATTER_PLACEHOLDER,
     }
     options["scales"] = {
         "x": {
@@ -209,9 +213,9 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
         "y": {
             "beginAtZero": True,
             "suggestedMax": max(values + (prior or [0])) * 1.2 or 1,
+            "ticks": {"precision": 0, "color": MUTED, "maxTicksLimit": 5},
             "grid": {"color": GRID},
             "border": {"display": False},
-            "ticks": {"color": MUTED, "maxTicksLimit": 5},
             "title": {"display": True, "text": "kWh", "color": MUTED},
         },
     }

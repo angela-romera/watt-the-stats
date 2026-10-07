@@ -30,12 +30,9 @@ STYLE = {"font.family": "DejaVu Sans", "font.size": 10, "text.color": INK}
 
 
 def format_kwh(value: Decimal | float) -> str:
-    """Keep small nonzero amounts visible and use Catalan decimal separators."""
+    """Round displayed consumption to whole kWh."""
     amount = Decimal(str(value))
-    if 0 < amount < Decimal("0.01"):
-        return "<0,01"
-    precision = Decimal("0.01") if abs(amount) < 1 else Decimal("0.1")
-    return format(amount.quantize(precision, rounding=ROUND_HALF_UP), "f").replace(".", ",")
+    return str(int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
 
 
 def _figure() -> Figure:
@@ -194,8 +191,8 @@ def _column_axes(figure: Figure, maximum: float) -> Axes:
     axis.set_xlim(-0.65, 2.65)
     axis.spines[["top", "right", "left"]].set_visible(False)
     axis.spines["bottom"].set_color(GRID)
-    axis.yaxis.set_major_locator(MaxNLocator(nbins=4))
-    axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _position: f"{value:g}"))
+    axis.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+    axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _position: f"{value:.0f}"))
     axis.tick_params(axis="both", length=0, labelsize=10, colors=MUTED, pad=8)
     axis.set_xticks((0, 1, 2), BAND_LABELS)
     axis.grid(axis="y", color=GRID, linewidth=0.8)

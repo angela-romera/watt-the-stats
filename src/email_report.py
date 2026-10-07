@@ -632,7 +632,7 @@ def _daily_averages(
     """Return average kWh/day and EUR/day for an inclusive date range."""
     days = (final_date - initial_date).days + 1
     return (
-        (consumption_kwh / days).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+        (consumption_kwh / days).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
         (cost_eur / days).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
     )
 
