@@ -13,7 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends chromium chromium-driver tzdata \
+    && apt-get install --yes --no-install-recommends chromium chromium-driver chromium-sandbox tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app \
     && printf '%s\n' '#!/bin/sh' 'exec /usr/bin/chromium --disable-dev-shm-usage "$@"' > /usr/local/bin/chromium \
