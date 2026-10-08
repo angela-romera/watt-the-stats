@@ -16,7 +16,7 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends chromium chromium-driver chromium-sandbox tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app \
-    && printf '%s\n' '#!/bin/sh' 'exec /usr/bin/chromium --disable-dev-shm-usage "$@"' > /usr/local/bin/chromium \
+    && printf '%s\n' '#!/bin/sh' 'exec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage "$@"' > /usr/local/bin/chromium \
     && chmod 755 /usr/local/bin/chromium
 
 COPY pyproject.toml uv.lock README.md ./
