@@ -186,6 +186,11 @@ def latest_invoice_report(
         )
         row = cursor.fetchone()
         if row is not None:
+            email_to = row[1]
+            if not isinstance(email_to, str) or not email_to.strip():
+                raise MissingReportRecipientError(
+                    f"Client {client_id} has no email_to address"
+                )
             current_id = row[0]
             cursor.execute(
                 sql.SQL(
@@ -204,8 +209,6 @@ def latest_invoice_report(
         final_date,
         tariff,
     ) = row
-    if not isinstance(email_to, str) or not email_to.strip():
-        raise MissingReportRecipientError(f"Client {client_id} has no email_to address")
     current_analysis = calculate_bill_analysis(current_details, initial_date, final_date)
     previous_period = _previous_period_summary(
         database,
