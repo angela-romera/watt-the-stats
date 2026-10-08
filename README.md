@@ -54,9 +54,7 @@ need to enable remote images in their email app.
 QuickChart receives the aggregate consumption amounts and the dates shown in
 the podium because these values are encoded in each image URL. A person with a
 complete URL can see that chart. No recipient address, invoice ID, credentials,
-or raw hourly data are included. The separate chart service remains private and
-is not used by report emails. Making it private prevents Gmail from loading its
-images directly.
+or raw hourly data are included.
 
 Each send also renders the same report data as three Matplotlib PNGs and keeps
 them locally under `report_chart_dir` from `config/settings.json`. These files
@@ -84,6 +82,9 @@ invoice and detail data into PostgreSQL:
 ```powershell
 uv run python main.py
 ```
+
+For scheduled runs, set `SCHEDULE_CRON` and `TIMEZONE` in `.env`, then run
+`uv run python -m src.scheduler`.
 
 Accounts are downloaded sequentially, each in a fresh browser session. Every
 account's contracts use `periods_to_download` from `config/settings.json`.
@@ -146,6 +147,14 @@ The report is informational; duplicate detection compares parsed CSV data with
 database records and does not depend on filenames or previous reports.
 To retry a failed file after fixing the problem, move it back into `data/downloads`.
 Processing-only mode does not move or delete CSVs. `.xls` files are not imported or deleted.
+
+## CI
+
+Gitleaks scans pull requests, pushes to `main`, and manual runs. Container images
+are published to GHCR on `main` with `sha-<12-character-commit>` tags.
+Weekly cleanup keeps the newest five SHA-only versions, removes older SHA-only
+and untagged versions, and preserves non-SHA tags. Manual cleanup defaults to a
+dry run.
 
 ## Transformation and PostgreSQL upload
 

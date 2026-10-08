@@ -52,5 +52,6 @@ build/
 dist/
 *.egg-info/
 
-# Image service has its own Sites source repository.
+# Local chart-service workspace
 chart-service/
+/.github/deploy
