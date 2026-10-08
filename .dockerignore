@@ -1,0 +1,12 @@
+# Only application files enter the build context.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!main.py
+!src/
+!src/*.py
+!config/
+!config/settings.json
