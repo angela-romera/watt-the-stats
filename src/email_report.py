@@ -38,6 +38,15 @@ from src.report_charts import (
 
 CHEAP_PRICE_THRESHOLD_EUR_PER_KWH = Decimal("0.15")
 EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH = Decimal("0.25")
+CONTRACTED_POWER_KW = Decimal("4.400")
+TRANSPORT_DISTRIBUTION_PEAK_EUR_PER_KW_YEAR = Decimal("27.704413")
+TRANSPORT_DISTRIBUTION_OFFPEAK_EUR_PER_KW_YEAR = Decimal("0.725423")
+FIXED_MARKETING_EUR_PER_KW_YEAR = Decimal("3.113")
+YEAR_DAYS = Decimal("365")
+SOCIAL_BONUS_EUR_PER_DAY = Decimal("0.024688")
+ELECTRICITY_TAX_RATE = Decimal("0.051126963")
+METER_RENTAL_EUR_PER_DAY = Decimal("0.026630")
+VAT_RATE = Decimal("0.21")
 CHEAP_PRICE_COLOR, MEDIUM_PRICE_COLOR, EXPENSIVE_PRICE_COLOR = BAND_COLORS
 
 
@@ -121,9 +130,9 @@ def latest_invoice_recipient(database: DatabaseSettings, client_id: int = 1) -> 
 
 
 def send_empty_invoice_report(
-    database: DatabaseSettings,
-    email: EmailSettings,
-    client_id: int = 1,
+        database: DatabaseSettings,
+        email: EmailSettings,
+        client_id: int = 1,
 ) -> ReportRecipient:
     """Send a deliberately empty report to the latest invoice's client."""
     recipient = latest_invoice_recipient(database, client_id)
@@ -139,7 +148,7 @@ def send_empty_invoice_report(
 
 
 def latest_invoice_report(
-    database: DatabaseSettings, client_id: int = 1, invoice_id: int | None = None
+        database: DatabaseSettings, client_id: int = 1, invoice_id: int | None = None
 ) -> InvoiceReport:
     """Summarize a client's latest invoice, or a requested invoice ID."""
     if isinstance(client_id, bool) or client_id < 1:
@@ -235,10 +244,10 @@ def latest_invoice_report(
 
 
 def _previous_period_summary(
-    database: DatabaseSettings,
-    client_id: int,
-    initial_date: date,
-    final_date: date,
+        database: DatabaseSettings,
+        client_id: int,
+        initial_date: date,
+        final_date: date,
 ) -> PreviousPeriod | None:
     """Summarize a fully represented equivalent date range from detail rows."""
     tables = {name: sql.Identifier(database.schema, name) for name in ("invoice", "detail")}
@@ -273,7 +282,7 @@ def _previous_period_summary(
 
 
 def _previous_invoice_summary(
-    database: DatabaseSettings, client_id: int, current_initial_date: date
+        database: DatabaseSettings, client_id: int, current_initial_date: date
 ) -> PreviousInvoice | None:
     """Return the invoice ending most recently before the current invoice starts."""
     tables = {name: sql.Identifier(database.schema, name) for name in ("invoice", "detail")}
@@ -327,11 +336,16 @@ def _one_year_earlier(value: date) -> date:
 
 
 def _report_message(
-    report: InvoiceReport, sender: str, chart_urls: Mapping[str, str]
+        report: InvoiceReport, sender: str, chart_urls: Mapping[str, str]
 ) -> EmailMessage:
     """Build text and HTML alternatives with linked charts and no MIME image parts."""
     consumption = report.consumption_kwh.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    cost = report.cost_eur.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    fixed_costs = _fixed_costs(report.initial_date, report.final_date)
+    fixed_cost_total = sum(fixed_costs.values(), Decimal("0"))
+    energy_cost = report.cost_eur.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    pre_tax_total = energy_cost + fixed_cost_total
+    other_costs = _other_costs(report.initial_date, report.final_date, pre_tax_total)
+    cost = (pre_tax_total + sum(other_costs.values(), Decimal("0"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     daily_consumption = _whole_kwh(report.analysis.kwh_per_day)
     daily_cost = report.analysis.eur_per_day.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     effective_price = _money_per_kwh(report.analysis.average_price_eur_per_kwh)
@@ -379,6 +393,15 @@ def _report_message(
         f"Consum total: {consumption} kWh\n"
         f"Consum mitj\u00e0 diari: {daily_consumption} kWh/dia\n"
         f"Cost total: {cost} EUR\n"
+        "ALTRES COSTOS\n"
+        f"Peatges de transport i distribució P1 (punta-pla): {fixed_costs['p1']:.2f} EUR\n"
+        f"Peatges de transport i distribució P3 (vall): {fixed_costs['p3']:.2f} EUR\n"
+        f"Marge de comercialització fix: {fixed_costs['marketing']:.2f} EUR\n"
+        f"Cost d'energia: {energy_cost:.2f} EUR\n"
+        f"Diversos — finançament del bo social: {other_costs['social_bonus']:.2f} EUR\n"
+        f"Impost sobre l'electricitat: {other_costs['electricity_tax']:.2f} EUR\n"
+        f"Lloguer del comptador: {other_costs['meter_rental']:.2f} EUR\n"
+        f"IVA (21 %): {other_costs['vat']:.2f} EUR\n"
         f"Cost mitja diaria: {daily_cost} EUR/dia\n"
         f"Preu mitja: {effective_price} EUR/kWh\n\n"
         "RESUM\n"
@@ -408,6 +431,14 @@ def _report_message(
         f"<strong>Consum total:</strong> {consumption} kWh<br>"
         f"<strong>Consum mitj\u00e0 diari:</strong> {daily_consumption} kWh/dia<br>"
         f"<strong>Cost total:</strong> {cost} EUR<br>"
+        f"<strong>Peatges P1 (punta-pla):</strong> {fixed_costs['p1']:.2f} EUR<br>"
+        f"<strong>Peatges P3 (vall):</strong> {fixed_costs['p3']:.2f} EUR<br>"
+        f"<strong>Marge de comercialització fix:</strong> {fixed_costs['marketing']:.2f} EUR<br>"
+        f"<strong>Cost d'energia:</strong> {energy_cost:.2f} EUR<br>"
+        f"<strong>Diversos — finançament del bo social:</strong> {other_costs['social_bonus']:.2f} EUR<br>"
+        f"<strong>Impost sobre l'electricitat:</strong> {other_costs['electricity_tax']:.2f} EUR<br>"
+        f"<strong>Lloguer del comptador:</strong> {other_costs['meter_rental']:.2f} EUR<br>"
+        f"<strong>IVA (21 %):</strong> {other_costs['vat']:.2f} EUR<br>"
         f"<strong>Cost mitjà diari:</strong> {daily_cost} EUR/dia</p>"
         f'{_side_by_side_charts_html(chart_urls["pie"], chart_urls["podium"])}'
         "<h2>Per què ha tingut aquest cost?</h2>"
@@ -419,6 +450,37 @@ def _report_message(
         subtype="html",
     )
     return message
+
+
+def _fixed_costs(initial_date: date, final_date: date) -> dict[str, Decimal]:
+    """Calculate fixed invoice charges for the inclusive billing period."""
+    days = Decimal((final_date - initial_date).days)
+    p1_raw = CONTRACTED_POWER_KW * TRANSPORT_DISTRIBUTION_PEAK_EUR_PER_KW_YEAR * days / YEAR_DAYS
+    p3_raw = CONTRACTED_POWER_KW * TRANSPORT_DISTRIBUTION_OFFPEAK_EUR_PER_KW_YEAR * days / YEAR_DAYS
+    marketing_raw = CONTRACTED_POWER_KW * FIXED_MARKETING_EUR_PER_KW_YEAR * days / YEAR_DAYS
+    costs = {
+        "p1": p1_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        "p3": p3_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        "marketing": marketing_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+    }
+    return costs
+
+
+def _other_costs(initial_date: date, final_date: date, taxable_base: Decimal) -> dict[str, Decimal]:
+    """Calculate social bonus, electricity tax, meter rental, and VAT."""
+    days = Decimal((final_date - initial_date).days)
+    social_bonus = (days * SOCIAL_BONUS_EUR_PER_DAY).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    electricity_tax_base = taxable_base + social_bonus
+    electricity_tax = (electricity_tax_base * ELECTRICITY_TAX_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    meter_rental = (days * METER_RENTAL_EUR_PER_DAY).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    vat_base = taxable_base + social_bonus + electricity_tax + meter_rental
+    vat = (vat_base * VAT_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return {
+        "social_bonus": social_bonus,
+        "electricity_tax": electricity_tax,
+        "meter_rental": meter_rental,
+        "vat": vat,
+    }
 
 
 def _previous_invoice_content(report: InvoiceReport) -> tuple[str, str]:
@@ -466,11 +528,11 @@ def _previous_invoice_content(report: InvoiceReport) -> tuple[str, str]:
 
 
 def _daily_comparison_sentence(
-    subject: str,
-    current: str,
-    previous: str,
-    unit: str,
-    change: Decimal | None,
+        subject: str,
+        current: str,
+        previous: str,
+        unit: str,
+        change: Decimal | None,
 ) -> str:
     if change is None:
         return "No hi ha prou dades per comparar les dues factures."
@@ -540,7 +602,7 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
         color = (
             "#E53935"
             if item.average_price_eur_per_kwh is not None
-            and item.average_price_eur_per_kwh >= EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH
+               and item.average_price_eur_per_kwh >= EXPENSIVE_PRICE_THRESHOLD_EUR_PER_KWH
             else "#43A047"
         )
         bars.append(
@@ -565,13 +627,13 @@ def _hourly_content(analysis: BillAnalysis) -> tuple[str, str]:
     )
     text += "\n" + "\n".join(observations) + "\n"
     html = (
-        "<p>Mitjana diària per hora (kWh/dia). Vermell indica una hora amb preu mitjà car; "
-        'el text també identifica cada hora.</p><table role="presentation" '
-        'style="width:100%;border-collapse:collapse;font-size:14px;">'
-        + "".join(bars)
-        + "</table><p>"
-        + " ".join(escape(item) for item in observations)
-        + "</p>"
+            "<p>Mitjana diària per hora (kWh/dia). Vermell indica una hora amb preu mitjà car; "
+            'el text també identifica cada hora.</p><table role="presentation" '
+            'style="width:100%;border-collapse:collapse;font-size:14px;">'
+            + "".join(bars)
+            + "</table><p>"
+            + " ".join(escape(item) for item in observations)
+            + "</p>"
     )
     return text, html
 
@@ -616,18 +678,18 @@ def _recommendation_content(recommendations: tuple[str, ...]) -> tuple[str, str]
         f"- {item}" for item in recommendations
     )
     html = (
-        "<h2>Consell per a la propera factura</h2><ul>"
-        + "".join(f"<li>{escape(item)}</li>" for item in recommendations)
-        + "</ul>"
+            "<h2>Consell per a la propera factura</h2><ul>"
+            + "".join(f"<li>{escape(item)}</li>" for item in recommendations)
+            + "</ul>"
     )
     return text, html
 
 
 def _daily_averages(
-    consumption_kwh: Decimal,
-    cost_eur: Decimal,
-    initial_date: date,
-    final_date: date,
+        consumption_kwh: Decimal,
+        cost_eur: Decimal,
+        initial_date: date,
+        final_date: date,
 ) -> tuple[Decimal, Decimal]:
     """Return average kWh/day and EUR/day for an inclusive date range."""
     days = (final_date - initial_date).days + 1
@@ -638,8 +700,8 @@ def _daily_averages(
 
 
 def _previous_period_content(
-    report: InvoiceReport,
-    current_bands: tuple[tuple[str, Decimal, str], ...],
+        report: InvoiceReport,
+        current_bands: tuple[tuple[str, Decimal, str], ...],
 ) -> tuple[
     str,
     str,
@@ -762,10 +824,10 @@ def _write_report_charts(report: InvoiceReport, email: EmailSettings) -> dict[st
 
 
 def send_invoice_report(
-    database: DatabaseSettings,
-    email: EmailSettings,
-    client_id: int = 1,
-    invoice_id: int | None = None,
+        database: DatabaseSettings,
+        email: EmailSettings,
+        client_id: int = 1,
+        invoice_id: int | None = None,
 ) -> InvoiceReport:
     """Send a consumption and cost summary for the latest or selected invoice."""
     report = latest_invoice_report(database, client_id, invoice_id)
