@@ -278,5 +278,5 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
         ]
     return _url(
         {"type": "bar", "data": {"labels": chart_labels, "datasets": datasets}, "options": options},
-        height=540 if prior is not None else 420,
+        height=320,
     )

@@ -259,7 +259,7 @@ def generate_bill_insights(
         and abs(comparison.consumption_per_day_change_percent) >= Decimal("1")
     ):
         summary.append(
-            f"El consum diari ha {('augmentat' if comparison.consumption_per_day_change_percent > 0 else 'baixat' if comparison.consumption_per_day_change_percent < 0 else 'quedat igual')} "
+            f"El consum diari ha {('augmentat' if comparison.consumption_per_day_change_percent > 0 else 'disminuït' if comparison.consumption_per_day_change_percent < 0 else 'quedat igual')} "
             f"un {abs(comparison.consumption_per_day_change_percent):.0f}% respecte de la factura anterior."
         )
     if (
@@ -267,7 +267,7 @@ def generate_bill_insights(
         and abs(comparison.cost_per_day_change_percent) >= Decimal("1")
     ):
         summary.append(
-            f"El cost diari ha {('augmentat' if comparison.cost_per_day_change_percent > 0 else 'baixat' if comparison.cost_per_day_change_percent < 0 else 'quedat igual')} "
+            f"El cost diari ha {('augmentat' if comparison.cost_per_day_change_percent > 0 else 'disminuït' if comparison.cost_per_day_change_percent < 0 else 'quedat igual')} "
             f"un {abs(comparison.cost_per_day_change_percent):.0f}%."
         )
     if (
@@ -336,7 +336,7 @@ def generate_diagnostics(analysis: BillAnalysis, comparison: BillComparison) -> 
             )
         elif delta < 0:
             messages.append(
-                f"El preu mitjà de l'electricitat ha baixat un {abs(delta):.0f}% "
+                f"El preu mitjà de l'electricitat ha disminuït un {abs(delta):.0f}% "
                 "respecte de la factura anterior."
             )
         else:
