@@ -448,8 +448,8 @@ def _report_message(
         f'<p style="font-size:36px;font-weight:bold;margin:8px 0 0;">{cost} EUR</p>'
         f"<p>{consumption} kWh &nbsp;|&nbsp; {effective_price} EUR/kWh</p>"
         f'<div style="background:#f1f8e9;padding:14px;border-radius:6px;">{summary_html}</div>'
-        '<table role="presentation" style="width:100%;border-collapse:collapse;margin:18px 0;">'
-        '<tr><td style="width:50%;vertical-align:top;padding:12px;background:#f5f7f8;">'
+        '<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 12px;margin:0;">'
+        '<tr><td style="width:100%;vertical-align:top;padding:14px;background:#f5f7f8;border-radius:6px;">'
         "<h2>Resum de la factura</h2>"
         f'<p style="margin-bottom:0;"><strong>Període:</strong> {report.initial_date:%d/%m/%Y} - '
         f"{report.final_date:%d/%m/%Y} / {billing_days} dies<br>"
@@ -458,7 +458,7 @@ def _report_message(
         f"<strong>Consum mitjà diari:</strong> {daily_consumption} kWh/dia<br>"
         f"<strong>Cost total:</strong> {cost} EUR<br>"
         f"<strong>Cost mitjà diari:</strong> {daily_cost} EUR/dia</p>"
-        '</td><td style="width:50%;vertical-align:top;padding:12px;background:#fafafa;">'
+        '</td></tr><tr><td style="width:100%;vertical-align:top;padding:14px;background:#fafafa;border-radius:6px;">'
         "<h2>Desglossament de costos</h2><p style=\"margin-bottom:0;\">"
         f"<strong>Peatges P1 (punta-pla):</strong> {fixed_costs['p1']:.2f} EUR<br>"
         f"<strong>Peatges P3 (vall):</strong> {fixed_costs['p3']:.2f} EUR<br>"
