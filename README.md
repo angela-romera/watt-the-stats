@@ -86,6 +86,26 @@ uv run python main.py
 For scheduled runs, set `SCHEDULE_CRON` and `TIMEZONE` in `.env`, then run
 `uv run python -m src.scheduler`.
 
+For on-demand runs, set `API_TOKEN` in `.env` and start the small HTTP server:
+
+```powershell
+uv run python -m src.api
+```
+
+Then trigger a run with a bearer token. The optional `mode` defaults to `upload`
+and also accepts `process-only`, `send-report`, and `send-empty-report`:
+
+```sh
+curl -X POST http://localhost:8000/run \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"process-only"}'
+```
+
+`GET /health` reports liveness without a token. A run blocks the request until
+it finishes; a second concurrent request returns `409`, and the run details
+stay in the container logs. The server refuses to start without `API_TOKEN`.
+
 Accounts are downloaded sequentially, each in a fresh browser session. Every
 account's contracts use `periods_to_download` from `config/settings.json`.
 All accounts share the configured download folder; numbered filename
