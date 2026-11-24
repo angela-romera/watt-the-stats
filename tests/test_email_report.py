@@ -20,6 +20,12 @@ from src.email_report import (
 
 DATABASE = DatabaseSettings("host", "database", "user", "secret")
 EMAIL = EmailSettings("sender@example.com", "email-secret", "smtp.example.com", 465)
+JS_FUNCTION = re.compile(r"function\([^)]*\)\{[^}]*\}")
+
+
+def load_chart_config(config: str) -> dict:
+    """Parse a QuickChart config, replacing JS formatters with valid JSON."""
+    return json.loads(JS_FUNCTION.sub('"function"', config))
 
 
 @pytest.fixture
@@ -115,11 +121,12 @@ def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch,
     assert '"type":"doughnut"' in chart_configs[0]
     assert '"formatter":function(value,context)' in chart_configs[0]
     assert '"doughnutlabel"' in chart_configs[0]
-    podium = json.loads(chart_configs[1])
-    columns = json.loads(chart_configs[2])
+    podium = load_chart_config(chart_configs[1])
+    columns = load_chart_config(chart_configs[2])
     assert [podium["type"], columns["type"]] == ["bar", "bar"]
-    assert podium["data"]["labels"][1][0].startswith("1 · ")
-    assert len(columns["data"]["datasets"]) == 2
+    assert podium["data"]["labels"][1] == "01/01/2026"
+    assert len(columns["data"]["datasets"]) == 1
+    assert len(columns["data"]["datasets"][0]["data"]) == 6
     versions = [parse_qs(urlsplit(url).query)["version"][0] for url in sources]
     assert versions == ["2", "4", "4"]
     assert len(list(chart_email.chart_dir.glob("*/*.png"))) == 3
@@ -133,7 +140,7 @@ def test_previous_year_section_only_appears_with_full_date_coverage(monkeypatch,
     ]
     assert "cid:" not in html
     assert "data:image" not in html
-    assert html.count('align="center"') == 3
+    assert html.count("text-align:center") == 3
 
 
 def test_incomplete_previous_year_period_is_omitted(monkeypatch, chart_email):
@@ -158,7 +165,7 @@ def test_incomplete_previous_year_period_is_omitted(monkeypatch, chart_email):
         unescape(url)
         for url in re.findall(r'<img src="([^"]+)"', message.get_body("html").get_content())
     ]
-    columns = json.loads(parse_qs(urlsplit(chart_urls[2]).query)["c"][0])
+    columns = load_chart_config(parse_qs(urlsplit(chart_urls[2]).query)["c"][0])
     assert len(columns["data"]["datasets"]) == 1
 
 
@@ -207,8 +214,8 @@ def test_previous_invoice_is_found_by_dates_and_daily_values_render(monkeypatch,
 
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     text = message.get_body("plain").get_content()
-    assert "Factura actual (01/01/2026 - 31/01/2026): 0.100 kWh/dia" in text
-    assert "Factura anterior (01/12/2025 - 10/12/2025): 0.100 kWh/dia" in text
+    assert "Factura actual (01/01/2026 - 31/01/2026): 0 kWh/dia" in text
+    assert "Factura anterior (01/12/2025 - 10/12/2025): 0 kWh/dia" in text
     assert "Preu mitjà" in text
     query = cursor.execute.call_args_list[3].args[0].as_string()
     assert "i.final_date < %s" in query

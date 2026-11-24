@@ -195,6 +195,7 @@ def daily_podium_url(days: Sequence[DailyUsage]) -> str:
     }
     return _url(config, height=540)
 
+
 def price_columns_url(current: PriceDistribution, previous: PriceDistribution | None = None) -> str:
     """Compare price bands, using the top-days visual style when history exists."""
     values = _values(current)
@@ -248,7 +249,7 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
     chart_labels = list(BAND_LABELS)
     datasets = [
         {
-            "label": "Per??ode actual",
+            "label": "Període actual",
             "data": values,
             "backgroundColor": list(BAND_COLORS),
             "borderRadius": 13,
@@ -261,9 +262,7 @@ def price_columns_url(current: PriceDistribution, previous: PriceDistribution | 
         comparison_values = [value for pair in zip(values, prior, strict=True) for value in pair]
         comparison_colors = [
             color
-            for current_color, previous_color in zip(
-                BAND_COLORS, PREVIOUS_BAND_COLORS, strict=True
-            )
+            for current_color, previous_color in zip(BAND_COLORS, PREVIOUS_BAND_COLORS, strict=True)
             for color in (current_color, previous_color)
         ]
         datasets = [
