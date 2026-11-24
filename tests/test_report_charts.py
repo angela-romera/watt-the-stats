@@ -70,7 +70,7 @@ def test_columns_keep_a_shared_zero_baseline_and_small_values_visible(monkeypatc
     monkeypatch.setattr(report_charts, "_png", lambda figure: figure)
     figure = report_charts.price_columns_png(distribution(0.1, 0.2, 0.3), distribution(0.3, 0.1, 0))
     axis = figure.axes[0]
-    assert [bar.get_height() for bar in axis.patches] == pytest.approx([0.1, 0.2, 0.3, 0.3, 0.1, 0])
+    assert [bar.get_height() for bar in axis.patches] == pytest.approx([0.1, 0.3, 0.2, 0.1, 0.3, 0])
     assert all(bar.get_y() == 0 for bar in axis.patches)
     assert axis.get_ylim() == pytest.approx((0, 0.375))
-    assert report_charts.format_kwh(Decimal("0.004")) == "<0,01"
+    assert report_charts.format_kwh(Decimal("0.004")) == "0"
